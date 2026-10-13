@@ -2,9 +2,14 @@
 import os
 import re
 import logging
+import asyncio
+import json
+from datetime import datetime, date, timedelta
 
 import httpx
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -23,6 +28,12 @@ API_BASE_URL = os.getenv(
     "http://127.0.0.1:8000",
 )
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.8-flash",
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -33,6 +44,12 @@ if not ALLOWED_USER_ID:
     raise RuntimeError("TELEGRAM_ALLOWED_USER_ID is missing from .env")
 
 ALLOWED_USER_ID = int(ALLOWED_USER_ID)
+
+ai_client = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY
+    else None
+)
 
 
 def _matches_keyword(text: str, keyword: str) -> bool:
@@ -62,7 +79,7 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
         (
             "Medicine",
             [
-                "meet doctor", "doctor fee", "doctor", "medicine", "medicines",
+                "pharmacy bill", "meet doctor", "doctor fee", "doctor", "medicine", "medicines",
                 "pharmacy", "channeling", "chanelling", "drugs", "tablets",
                 "pills", "panadol", "paracetamol", "syrup", "medical", "clinic",
                 "hospital", "dentist", "blood test", "test report", "scan",
@@ -97,6 +114,7 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
         (
             "Transport",
             [
+                "bus ticket", "train ticket", "ticket", "tickets",
                 "tuk tuk", "three wheeler", "threewheeler", "threewheel",
                 "bus", "train", "pickme", "uber", "petrol", "fuel", "bike",
                 "taxi", "tuk", "van", "highway", "diesel", "parking",
@@ -110,9 +128,14 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
                 "lunch", "dinner", "breakfast", "food", "restaurant",
                 "coffee", "tea", "snack", "snacks", "kottu", "rice",
                 "curry", "hoppers", "bakery", "cafe", "bites", "juice",
-                "pizza", "burger", "dessert",
+                "pizza", "burger", "dessert", "milk", "banana", "bananas",
+                "bread", "fruits", "fruit", "vegetables", "egg", "eggs",
+                "groceries", "grocery", "cheese", "butter", "biscuit",
+                "biscuits", "meat", "fish", "chicken", "sugar", "dhal",
+                "curd", "yoghurt",
             ],
         ),
+
         (
             "Buy",
             [
@@ -138,15 +161,213 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
         sorted_keywords = sorted(keywords, key=len, reverse=True)
         for kw in sorted_keywords:
             if _matches_keyword(text, kw):
-                return category, kw
+                short_tag = clean_short_subcategory(category, kw, title)
+                return category, short_tag
 
     return "Other", None
+
+
+def clean_short_subcategory(category: str, raw_tag: str | None, title: str) -> str | None:
+    """Normalize subcategory tags into clean, short names (e.g., bus ticket -> bus)."""
+    text = f"{title} {raw_tag or ''}".lower()
+
+    # Transport
+    if "bus" in text:
+        return "bus"
+    if "train" in text:
+        return "train"
+    if "petrol" in text or "fuel" in text or "petral" in text:
+        return "petrol"
+    if "diesel" in text:
+        return "diesel"
+    if "taxi" in text or "pickme" in text or "uber" in text:
+        return "taxi"
+    if "tuk" in text or "three wheeler" in text or "threewheel" in text:
+        return "tuk tuk"
+    if "highway" in text or "expressway" in text or "toll" in text:
+        return "highway"
+    if "ticket" in text and category == "Transport":
+        return "ticket"
+
+    # Food
+    if "milk" in text:
+        return "milk"
+    if "banana" in text:
+        return "banana"
+    if "bread" in text:
+        return "bread"
+    if "egg" in text:
+        return "eggs"
+    if "rice" in text:
+        return "rice"
+    if "chicken" in text or "meat" in text:
+        return "chicken"
+    if "fish" in text:
+        return "fish"
+    if "biscuit" in text:
+        return "biscuits"
+    if "coffee" in text:
+        return "coffee"
+    if "tea" in text:
+        return "tea"
+    if "snack" in text or "short eats" in text:
+        return "snacks"
+    if "lunch" in text:
+        return "lunch"
+    if "dinner" in text:
+        return "dinner"
+    if "breakfast" in text:
+        return "breakfast"
+    if "fruit" in text:
+        return "fruits"
+    if "vege" in text or "vegetable" in text:
+        return "vegetables"
+
+    # Medicine
+    if "panadol" in text or "paracetamol" in text:
+        return "panadol"
+    if "doctor" in text or "channel" in text:
+        return "doctor"
+    if "pharmacy" in text or "medicine" in text or "tablet" in text or "pill" in text:
+        return "medicine"
+    if "hospital" in text or "clinic" in text:
+        return "hospital"
+
+    # Utilities
+    if "electricity" in text or "current bill" in text:
+        return "electricity"
+    if "water" in text:
+        return "water bill"
+    if "reload" in text or "recharge" in text:
+        return "reload"
+    if "wifi" in text or "internet" in text:
+        return "internet"
+
+    # Buy
+    if "shirt" in text or "shairt" in text:
+        return "shirt"
+    if "pant" in text or "trouser" in text or "jean" in text:
+        return "pants"
+    if "shoe" in text or "slipper" in text or "sandal" in text:
+        return "shoes"
+    if "phone" in text or "mobile" in text:
+        return "phone"
+    if "laptop" in text:
+        return "laptop"
+
+    # Enjoy / Bodim / Loan
+    if "party" in text:
+        return "party"
+    if "bday" in text or "birthday" in text:
+        return "birthday"
+    if "bodim" in text or "boarding" in text or "hostel" in text:
+        return "bodim fee"
+    if "loan" in text:
+        return "loan"
+
+    return raw_tag
+
+
+def parse_receipt_date(raw_candidate: str | None = None, date_candidate: str | None = None) -> str:
+    """
+    Robust date parser for Sri Lankan receipts, bus tickets, bills, and POS slips.
+    Prioritizes raw receipt text parsed with Day-Month-Year conventions.
+    Rejects future dates (e.g. pharmacy medicine expiry dates).
+    Guarantees returning a valid ISO YYYY-MM-DD string.
+    """
+    today = date.today()
+    max_allowed = today + timedelta(days=1)  # Buffer for timezones
+
+    sri_lankan_day_first_formats = [
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d.%m.%Y",
+        "%d/%m/%y",
+        "%d-%m-%y",
+        "%d.%m.%y",
+        "%d/%b/%Y",
+        "%d-%b-%Y",
+        "%d %b %Y",
+        "%d/%b/%y",
+        "%d-%b-%y",
+        "%d %b %y",
+        "%d/%B/%Y",
+        "%d-%B-%Y",
+        "%d %B %Y",
+        "%d/%B/%y",
+        "%d-%B-%y",
+        "%d %B %y",
+        "%d.%b.%Y",
+        "%d.%b.%y",
+    ]
+
+    iso_and_other_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%b %d %Y",
+        "%B %d %Y",
+        "%y/%m/%d",
+        "%y-%m-%d",
+        "%y.%m.%d",
+    ]
+
+    all_formats = sri_lankan_day_first_formats + iso_and_other_formats
+
+    candidates = [c for c in [raw_candidate, date_candidate] if c and isinstance(c, str)]
+
+    for cand in candidates:
+        s = cand.strip()
+        if not s or s.lower() in {"null", "none"}:
+            continue
+
+        # 1. Match full date patterns (e.g., '12/10/26', '12-OCT-2026', '13.10.2026')
+        match = re.search(
+            r"(\d{1,4}[-/\.]\d{1,2}[-/\.]\d{1,4}|\d{1,2}[-/\s][A-Za-z]{3,9}[-/\s]\d{2,4})",
+            s,
+        )
+        date_str = match.group(1).strip() if match else None
+
+        # 2. Check for Day/Month only (common on small thermal bus slips, e.g. "12/10 14:22")
+        if not date_str:
+            dm_match = re.search(r"\b(\d{1,2}[-/\.]\d{1,2})\b", s)
+            if dm_match:
+                date_str = f"{dm_match.group(1)}/{today.year}"
+
+        if not date_str:
+            date_str = s.split()[0].strip()
+
+        for fmt in all_formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                if dt.year < 100:
+                    dt = dt.replace(year=dt.year + 2000)
+
+                parsed_date = dt.date()
+
+                # Safety check: Expenses cannot be in the future (avoids pharmacy medicine expiry dates like 2028-05-01)
+                if parsed_date > max_allowed:
+                    logger.warning("Ignoring future date candidate (likely expiry date): %s", parsed_date)
+                    continue
+
+                # Don't accept unreasonably old dates
+                if parsed_date.year < 2020:
+                    continue
+
+                return parsed_date.isoformat()
+            except ValueError:
+                pass
+
+    return today.isoformat()
 
 
 def detect_category(title: str) -> str:
     """Helper returning only the category name."""
     category, _ = detect_category_and_keyword(title)
     return category
+
 
 
 
@@ -157,13 +378,16 @@ async def start(
     await update.message.reply_text(
         "👋 Welcome to your Expense Tracker!\n\n"
         "✨ Quick Guide:\n\n"
+        "📸 Receipt & Ticket Scanning:\n"
+        "• Just send a photo of any supermarket receipt, bus ticket, or pharmacy bill!\n"
+        "• Items and amounts are automatically extracted and categorized.\n\n"
         "🎯 Events & Trips:\n"
         "• start trip to Kandy (or start trip Galle)\n"
         "• start campus (or start go to campus)\n"
         "• start event Birthday Party\n"
         "• active event (check active event)\n"
         "• end event (finish & deactivate active event)\n\n"
-        "💵 Record Expenses:\n"
+        "💵 Record Expenses via Text:\n"
         "• Single: bus 1000\n"
         "• Multiple (one per line):\n"
         "  bus 600\n"
@@ -179,13 +403,16 @@ async def help_command(
 ):
     await update.message.reply_text(
         "📖 Available Commands & Formats:\n\n"
+        "📸 Receipt & Bill Scanner:\n"
+        "• Send a photo of any receipt, bus/train ticket, or bill.\n"
+        "• Automatically extracts items (e.g., milk -> Food (milk), ticket -> Transport (bus), panadol -> Medicine (panadol)).\n\n"
         "🌴 Trips & Events:\n"
         "• start trip to <destination>\n"
         "• start campus\n"
         "• start event <event name>\n"
         "• active trip / active event\n"
         "• end trip / end event\n\n"
-        "💸 Expenses (description amount):\n"
+        "💸 Text Expenses (description amount):\n"
         "• bus 1000\n"
         "• lunch 800\n"
         "• bodim fee 15000\n"
@@ -203,6 +430,7 @@ async def help_command(
 
 
 async def handle_message(
+
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
@@ -498,11 +726,252 @@ async def handle_message(
     await message.reply_text("\n".join(reply_blocks))
 
 
+async def handle_receipt_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    user = update.effective_user
+    message = update.effective_message
+
+    # Only accept messages from the allowed Telegram account.
+    if user is None or user.id != ALLOWED_USER_ID:
+        await message.reply_text("Sorry, you are not authorized.")
+        return
+
+    if not ai_client:
+        await message.reply_text(
+            "⚠️ Scanning service is currently not available. Please check server settings."
+        )
+        return
+
+    status_msg = await message.reply_text("🔍 Scanning document, please wait...")
+
+    try:
+        mime_type = "image/jpeg"
+        if message.photo:
+            photo_file = await message.photo[-1].get_file()
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
+            photo_file = await message.document.get_file()
+            mime_type = message.document.mime_type
+        else:
+            await status_msg.edit_text("Please send an image or photo of the receipt/bill.")
+            return
+
+        image_bytes = await photo_file.download_as_bytearray()
+
+        today_iso = date.today().isoformat()
+        current_year = date.today().year
+
+        prompt_instruction = (
+            f"You are an expert expense and receipt parser for Sri Lanka (currency: LKR). Today is {today_iso}.\n"
+            "Analyze this supermarket receipt, bus ticket, train ticket, pharmacy bill, fuel slip, or utility bill image.\n"
+            "Return ONLY a valid JSON object matching this schema:\n"
+            "{\n"
+            '  "merchant": string or null (name of the store, supermarket, bus company, pharmacy, clinic, or provider),\n'
+            '  "date": "YYYY-MM-DD" or null (accurately extracted transaction date in ISO YYYY-MM-DD format),\n'
+            '  "raw_date": string or null (the EXACT date/time characters printed on the receipt/ticket, e.g. "12/10/26 14:22", "12-OCT-2026", "13.10.2026", "දිනය: 12/10/26"),\n'
+            '  "receipt_total": number or null (total amount),\n'
+            '  "items": [\n'
+            "    {\n"
+            '      "name": string (item, ticket, or service description),\n'
+            '      "amount": number (positive line total for this item, not unit price),\n'
+            '      "category": string (MUST be one of: "Food", "Transport", "Medicine", "Buy", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
+            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "electricity", "reload", "doctor", etc.)\n'
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "CRITICAL DATE RECOGNITION RULES (TOP PRIORITY):\n"
+            "- Scan the ENTIRE document carefully for the transaction/issue date.\n"
+            "- Look in all typical locations:\n"
+            "  * BUS TICKETS: Top header line, next to bus route/trip/serial number, above or below fare, or next to 'Date:', 'DATE', 'D:', 'DT:', 'දිනය' (Sinhala for Date), or 'திகதி' (Tamil for Date).\n"
+            "  * PHARMACY BILLS: The top invoice header next to Bill Date/Date. IMPORTANT: DO NOT mistake medicine batch expiry dates (EXP, BB, B.NO, EXP.DT) for the receipt date!\n"
+            "  * SUPERMARKET & POS RECEIPTS: Top header under store name or bottom footer next to cashier/time stamp.\n"
+            "  * TRAIN TICKETS: Printed date or stamped ink on the front/back.\n"
+            "  * FUEL SLIPS: Header next to pump/nozzle or 'DATE:'.\n"
+            "- REGIONAL DATE CONVENTION: In Sri Lanka, dates are ALWAYS in Day-Month-Year order (DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD/MM/YY, DD-MM-YY, DD.MM.YY, or DD-Mon-YYYY).\n"
+            f"- Two-digit years like '26' mean {current_year} (e.g. '12/10/26' -> '2026-10-12', '13.10.26' -> '2026-10-13', '05/10/26' -> '2026-10-05'). Day is first!\n"
+            f"- If year is omitted (e.g. '12/10 14:22'), assume year is {current_year}.\n"
+            "- DO NOT guess or default to today's date if a printed date exists on the document! Extract the actual printed date.\n"
+            "- Always place the exact text as seen on the receipt in 'raw_date' and the converted ISO format in 'date'.\n\n"
+            "Categorization rules:\n"
+            '- "Food": Supermarket food and groceries (milk, banana, bread, vegetables, fruits, biscuits, rice, chicken), restaurant meals, coffee, snacks.\n'
+            '- "Transport": Bus tickets, train tickets, taxi, PickMe, Uber, petrol, fuel, parking, highway expressway toll.\n'
+            '- "Medicine": Pharmacy bills, medicines, panadol, tablets, pills, clinic/hospital, doctor channeling.\n'
+            '- "Buy": Clothing (shirt, pants, dress), shoes, electronics (phone, charger, headphones), stationery, books, household items.\n'
+            '- "Utilities": Electricity bill, water bill, phone reload, mobile packages, internet/wifi (Dialog, Mobitel, SLT).\n'
+            '- "Enjoy": Parties, movies, outings, club, entertainment.\n'
+            '- "Bodim Fee": Room rent, boarding fee, hostel rent.\n'
+            '- "Other": Anything not fitting above.\n\n'
+            "Guidelines:\n"
+            "- For supermarket receipts with itemized lines, list each item in 'items'. Exclude subtotal and grand total from 'items'.\n"
+            "- For single tickets (e.g. bus ticket) or simple bills, return 1 item with the full ticket price, category 'Transport', and subcategory 'bus'.\n"
+            "- For 'subcategory', always provide a clean short word (e.g., for bus ticket -> 'bus', for fresh milk -> 'milk', for panadol -> 'panadol').\n"
+            "- Do not guess unreadable values. Use null for unknown values. Amounts must be positive numbers. Assume LKR."
+        )
+
+        response = await asyncio.to_thread(
+            ai_client.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=[
+                prompt_instruction,
+                types.Part.from_bytes(
+                    data=bytes(image_bytes),
+                    mime_type=mime_type,
+                ),
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0,
+            ),
+        )
+
+        content = response.text
+        if not content:
+            raise ValueError("Empty response received from scanner.")
+
+        receipt = json.loads(content)
+
+        items = receipt.get("items") or []
+        merchant = receipt.get("merchant")
+        raw_date_val = receipt.get("raw_date")
+        date_val = receipt.get("date")
+
+        # Parse date with multi-format fallback to guarantee exact ISO YYYY-MM-DD
+        final_expense_date = parse_receipt_date(raw_candidate=raw_date_val, date_candidate=date_val)
+
+        # Fallback if items list is empty but receipt_total is found (e.g. single ticket)
+        if not items and receipt.get("receipt_total"):
+            ticket_desc = merchant or "Ticket / Bill"
+            is_bus = "bus" in ticket_desc.lower()
+            is_train = "train" in ticket_desc.lower()
+            items = [{
+                "name": ticket_desc,
+                "amount": float(receipt["receipt_total"]),
+                "category": "Transport" if (is_bus or is_train) else "Other",
+                "subcategory": "bus" if is_bus else ("train" if is_train else None),
+            }]
+
+        if not items:
+            await status_msg.edit_text(
+                "⚠️ Could not detect any items or amounts on this receipt.\n"
+                "Please make sure the photo is clear and well-lit, or send text manually."
+            )
+            return
+
+        saved_items = []
+        failed_count = 0
+        active_event_name = None
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            for it in items:
+                raw_name = (it.get("name") or "Item").strip()
+                try:
+                    amount = float(it.get("amount", 0))
+                except (ValueError, TypeError):
+                    continue
+
+                if amount <= 0:
+                    continue
+
+                # Refine category using our local rules if matched
+                local_cat, local_sub = detect_category_and_keyword(raw_name)
+                if local_cat != "Other":
+                    category = local_cat
+                    raw_sub = local_sub or it.get("subcategory")
+                else:
+                    gemini_cat = it.get("category")
+                    valid_cats = {"Bodim Fee", "Medicine", "Loan", "Enjoy", "Utilities", "Transport", "Food", "Buy"}
+                    category = gemini_cat if gemini_cat in valid_cats else "Other"
+                    raw_sub = it.get("subcategory")
+
+                # Normalize subcategory to clean short tag (e.g. bus ticket -> bus)
+                subcategory = clean_short_subcategory(category, raw_sub, raw_name)
+
+                payload = {
+                    "title": raw_name,
+                    "amount": amount,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "merchant": merchant,
+                    "expense_date": final_expense_date,
+                    "source": "receipt",
+                }
+
+                try:
+                    res = await client.post(f"{API_BASE_URL}/expenses", json=payload)
+                    res.raise_for_status()
+                    saved_data = res.json()
+                    exp_obj = saved_data.get("expense", saved_data)
+                    ev_name = exp_obj.get("event_name")
+                    if ev_name and not active_event_name:
+                        active_event_name = ev_name
+                    elif exp_obj.get("event_id") and not active_event_name:
+                        active_event_name = f"Event #{exp_obj.get('event_id')}"
+                    saved_items.append({
+                        "name": raw_name,
+                        "amount": amount,
+                        "category": category,
+                        "subcategory": subcategory,
+                    })
+                except Exception as exc:
+                    logger.exception("Error saving receipt item '%s': %s", raw_name, exc)
+                    failed_count += 1
+
+        if not saved_items:
+            await status_msg.edit_text("⚠️ Failed to save extracted items to database. Check server logs.")
+            return
+
+        total_spent = sum(item["amount"] for item in saved_items)
+        reply_lines = [
+            "🧾 Receipt processed successfully!\n",
+        ]
+        if merchant:
+            reply_lines.append(f"🏪 Merchant: {merchant}")
+        reply_lines.append(f"📅 Date: {final_expense_date}")
+        reply_lines.append("")
+
+        for idx, item in enumerate(saved_items, 1):
+            tag_str = f" ({item['subcategory']})" if item["subcategory"] else ""
+            reply_lines.append(
+                f"{idx}. {item['name']}\n"
+                f"   • Amount: LKR {item['amount']:,.2f}\n"
+                f"   • Category: {item['category']}{tag_str}\n"
+            )
+
+        reply_lines.append(f"\n💰 Total: LKR {total_spent:,.2f}")
+        if active_event_name:
+            reply_lines.append(f"Linked Event: {active_event_name}")
+        if failed_count > 0:
+            reply_lines.append(f"\n⚠️ {failed_count} item(s) could not be saved.")
+
+        await status_msg.edit_text("\n".join(reply_lines))
+
+
+    except Exception as exc:
+        logger.exception("Error processing receipt photo: %s", exc)
+        await status_msg.edit_text(
+            "❌ Could not process the document. Please make sure the photo is clear and well-lit, or send text manually."
+        )
+
+
+
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO,
+            handle_receipt_photo,
+        )
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.Document.IMAGE,
+            handle_receipt_photo,
+        )
+    )
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,

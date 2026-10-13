@@ -44,30 +44,48 @@ def handle_database_error(exc: Exception, action_description: str) -> HTTPExcept
 @router.post("", status_code=201)
 def create_expense(expense: ExpenseCreate):
     data = expense.model_dump(mode="json", exclude_none=True)
+    active_event_name = None
 
     # If no event ID is supplied, attach to the active event if one exists
     if expense.event_id is None:
         try:
             active = (
                 supabase.table("expense_events")
-                .select("id")
+                .select("id, name")
                 .eq("status", "active")
                 .limit(1)
                 .execute()
             )
             if active.data:
                 data["event_id"] = active.data[0]["id"]
+                active_event_name = active.data[0]["name"]
                 logger.info(
-                    "Attaching expense '%s' to active event ID %s",
+                    "Attaching expense '%s' to active event '%s' (ID %s)",
                     expense.title,
+                    active_event_name,
                     data["event_id"],
                 )
         except Exception as exc:
             logger.warning("Could not check for active event: %s", exc)
+    else:
+        try:
+            ev = (
+                supabase.table("expense_events")
+                .select("name")
+                .eq("id", expense.event_id)
+                .limit(1)
+                .execute()
+            )
+            if ev.data:
+                active_event_name = ev.data[0]["name"]
+        except Exception:
+            pass
 
     try:
         result = supabase.table("expenses").insert(data).execute()
-        created_expense = result.data[0]
+        created_expense = dict(result.data[0])
+        if active_event_name:
+            created_expense["event_name"] = active_event_name
         logger.info(
             "Created expense ID %s: '%s' (Amount: %s, Category: %s)",
             created_expense.get("id"),
@@ -78,6 +96,7 @@ def create_expense(expense: ExpenseCreate):
         return {"message": "Expense created", "expense": created_expense}
     except Exception as exc:
         raise handle_database_error(exc, "creating expense")
+
 
 
 # -------------------------------

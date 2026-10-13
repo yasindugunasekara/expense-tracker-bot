@@ -137,7 +137,16 @@ def end_event(event_id: int):
             detail="This event is not active",
         )
 
-    ended_at = datetime.now(timezone.utc).isoformat()
+    now_utc = datetime.now(timezone.utc)
+    started_at_str = event.get("started_at")
+    if started_at_str:
+        try:
+            started_at_dt = datetime.fromisoformat(started_at_str)
+            if now_utc < started_at_dt:
+                now_utc = started_at_dt
+        except Exception:
+            pass
+    ended_at = now_utc.isoformat()
 
     try:
         result = (

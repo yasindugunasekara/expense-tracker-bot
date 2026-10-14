@@ -809,25 +809,56 @@ async def handle_receipt_photo(
             "- Do not guess unreadable values. Use null for unknown values. Amounts must be positive numbers. Assume LKR."
         )
 
-        response = await asyncio.to_thread(
-            ai_client.models.generate_content,
-            model=GEMINI_MODEL,
-            contents=[
-                prompt_instruction,
-                types.Part.from_bytes(
-                    data=bytes(image_bytes),
-                    mime_type=mime_type,
-                ),
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0,
-            ),
-        )
+        models_to_try = list(dict.fromkeys([GEMINI_MODEL, "gemini-flash-latest", "gemini-3.5-flash"]))
+        response = None
+        last_error = None
+
+        for model_name in models_to_try:
+            for attempt in range(2):
+                try:
+                    response = await asyncio.to_thread(
+                        ai_client.models.generate_content,
+                        model=model_name,
+                        contents=[
+                            prompt_instruction,
+                            types.Part.from_bytes(
+                                data=bytes(image_bytes),
+                                mime_type=mime_type,
+                            ),
+                        ],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0,
+                        ),
+                    )
+                    if response and response.text:
+                        break
+                except Exception as exc:
+                    last_error = exc
+                    err_msg = str(exc)
+                    if "503" in err_msg or "UNAVAILABLE" in err_msg or "high demand" in err_msg.lower():
+                        logger.warning(
+                            "Model %s busy (503). Retrying after pause... (attempt %d/2)",
+                            model_name, attempt + 1
+                        )
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        logger.warning("Model %s failed with non-503 error: %s", model_name, exc)
+                        break
+
+            if response and response.text:
+                break
+
+        if not response or not response.text:
+            if last_error and ("503" in str(last_error) or "UNAVAILABLE" in str(last_error) or "high demand" in str(last_error).lower()):
+                await status_msg.edit_text(
+                    "⚠️ The scanning service is temporarily experiencing high server demand from Google. Please try sending the photo again in a moment."
+                )
+                return
+            raise last_error or ValueError("Empty response received from scanner.")
 
         content = response.text
-        if not content:
-            raise ValueError("Empty response received from scanner.")
 
         receipt = json.loads(content)
 
@@ -949,9 +980,15 @@ async def handle_receipt_photo(
 
     except Exception as exc:
         logger.exception("Error processing receipt photo: %s", exc)
-        await status_msg.edit_text(
-            "❌ Could not process the document. Please make sure the photo is clear and well-lit, or send text manually."
-        )
+        err_str = str(exc)
+        if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
+            await status_msg.edit_text(
+                "⚠️ The scanning service is temporarily experiencing high server demand from Google. Please try sending the photo again in a moment."
+            )
+        else:
+            await status_msg.edit_text(
+                "❌ Could not process the document. Please make sure the photo is clear and well-lit, or send text manually."
+            )
 
 
 

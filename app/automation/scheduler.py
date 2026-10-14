@@ -241,10 +241,24 @@ def check_due_tasks():
 
 
 
+def auto_sync_receipt_emails():
+    """Periodically check for new PickMe and HelaPay emails and import them."""
+    try:
+        from app.gmail_reader import sync_receipt_emails
+        res = sync_receipt_emails(max_emails=25)
+        if res.get("imported_count", 0) > 0:
+            logger.info(
+                "Auto-synced %d new email receipts into expenses.",
+                res["imported_count"],
+            )
+    except Exception as exc:
+        logger.warning("Could not auto-sync email receipts: %s", exc)
+
+
 def main():
     scheduler = BlockingScheduler(timezone=TIMEZONE)
 
-    # Check the database every 30 seconds.
+    # Check the database every 30 seconds for summary / threshold tasks.
     scheduler.add_job(
         check_due_tasks,
         trigger="interval",
@@ -254,13 +268,26 @@ def main():
         coalesce=True,
     )
 
+    # Scan for new PickMe and HelaPay email receipts every 15 minutes.
+    scheduler.add_job(
+        auto_sync_receipt_emails,
+        trigger="interval",
+        minutes=15,
+        id="auto_sync_receipt_emails",
+        max_instances=1,
+        coalesce=True,
+    )
+
     logger.info("Expense automation scheduler started.")
     logger.info("Timezone: Asia/Colombo")
 
-    # Check immediately, then continue checking every 30 seconds.
+    # Run immediate checks on startup
     check_due_tasks()
+    auto_sync_receipt_emails()
+
     scheduler.start()
 
 
 if __name__ == "__main__":
     main()
+

@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 credentials.json
 token.json
+
 credentials.json*
 token.json*
 token_readonly_backup.json*

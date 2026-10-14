@@ -588,5 +588,29 @@ async def delete_task(task_id: int, confirm: bool = False) -> str:
         return task_error(f"Failed to delete task {task_id}: {exc}")
 
 
+@mcp.tool()
+async def sync_email_receipts(max_emails: int = 25) -> str:
+    """
+    Scan Gmail for unimported PickMe ride receipts and HelaPay payment confirmation bills,
+    extract expense details (amounts, dates, merchants, payment methods, reference IDs),
+    save them to Supabase, and prevent duplicate imports.
+    PickMe rides are mapped to Transport, while HelaPay payments are classified by actual bill details
+    (e.g. Internet, Mobile Reload, Electricity, Water, Insurance).
+    """
+    import asyncio
+    from app.gmail_reader import sync_receipt_emails
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, sync_receipt_emails, max_emails, False)
+        return json_result(result)
+    except Exception as exc:
+        return json_result({
+            "success": False,
+            "error": f"Failed to sync email receipts: {exc}",
+        })
+
+
 if __name__ == "__main__":
+
     mcp.run(transport="stdio")

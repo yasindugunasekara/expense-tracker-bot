@@ -5,3 +5,27 @@ __pycache__/
 .pytest_cache/
 credentials.json
 token.json
+credentials.json*
+token.json*
+token_readonly_backup.json*
+token_readonly_old.json
+
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Test and coverage files
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local logs
+*.log
+
+# IDE settings
+.vscode/
+.idea/

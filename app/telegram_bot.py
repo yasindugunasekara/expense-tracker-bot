@@ -147,9 +147,10 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
                 "shoes", "slippers", "sandal", "sandals", "sarong", "socks",
                 "jacket", "hoodie", "cap", "belt",
                 # Electronics & accessories
-                "phone", "mobile", "laptop", "tablet", "mouse", "keyboard",
+                "camera", "lens", "phone", "mobile", "laptop", "tablet", "mouse", "keyboard",
                 "headphones", "headphone", "earphones", "earphone", "airpods",
                 "earbuds", "charger", "cable", "power bank", "pendrive", "monitor",
+                "tripod", "mic", "microphone", "speaker", "speakers", "tv",
                 "bag", "backpack", "watch", "perfume", "wallet", "sunglasses",
                 "glasses", "book", "books", "stationery", "pen", "notebook",
             ],
@@ -244,16 +245,54 @@ def clean_short_subcategory(category: str, raw_tag: str | None, title: str) -> s
         return "internet"
 
     # Buy
-    if "shirt" in text or "shairt" in text:
-        return "shirt"
-    if "pant" in text or "trouser" in text or "jean" in text:
-        return "pants"
-    if "shoe" in text or "slipper" in text or "sandal" in text:
-        return "shoes"
-    if "phone" in text or "mobile" in text:
-        return "phone"
-    if "laptop" in text:
-        return "laptop"
+    if category == "Buy":
+        # Extract item from "buy camera", "buy new lens", "bought a phone", "order watch"
+        buy_pattern = r"^(?:buy|bought|purchase|purchased|order|ordered)\s+(?:a\s+|an\s+|new\s+|the\s+)?(.+)$"
+        m = re.match(buy_pattern, title.strip(), re.IGNORECASE)
+        if m:
+            extracted_item = m.group(1).strip().lower()
+            for kw in [
+                "camera", "lens", "phone", "mobile", "laptop", "tablet", "mouse", "keyboard",
+                "headphones", "earphones", "airpods", "earbuds", "charger", "cable",
+                "power bank", "tripod", "mic", "microphone", "speaker", "speakers", "monitor",
+                "shirt", "pants", "trousers", "jeans", "shoes", "slippers", "sandals",
+                "bag", "backpack", "watch", "perfume", "wallet", "sunglasses", "glasses",
+                "book", "stationery", "pen", "notebook"
+            ]:
+                if kw in extracted_item:
+                    if kw in {"mobile", "phone"}:
+                        return "phone"
+                    if kw in {"trousers", "jeans", "pants"}:
+                        return "pants"
+                    if kw in {"slippers", "sandals", "shoes"}:
+                        return "shoes"
+                    if kw in {"earphones", "airpods", "earbuds", "headphones"}:
+                        return "headphones"
+                    return kw
+            return extracted_item
+
+        for kw in [
+            "camera", "lens", "phone", "mobile", "laptop", "tablet", "mouse", "keyboard",
+            "headphones", "earphones", "airpods", "earbuds", "charger", "cable",
+            "power bank", "tripod", "mic", "microphone", "speaker", "speakers", "monitor",
+            "shirt", "pants", "trousers", "jeans", "shoes", "slippers", "sandals",
+            "bag", "backpack", "watch", "perfume", "wallet", "sunglasses", "glasses",
+            "book", "stationery", "pen", "notebook"
+        ]:
+            if kw in text:
+                if kw in {"mobile", "phone"}:
+                    return "phone"
+                if kw in {"trousers", "jeans", "pants"}:
+                    return "pants"
+                if kw in {"slippers", "sandals", "shoes"}:
+                    return "shoes"
+                if kw in {"earphones", "airpods", "earbuds", "headphones"}:
+                    return "headphones"
+                return kw
+
+        if raw_tag and raw_tag.lower() not in {"buy", "bought", "purchase", "purchased", "order", "ordered"}:
+            return raw_tag.lower()
+        return "item"
 
     # Enjoy / Bodim / Loan
     if "party" in text:
@@ -776,7 +815,7 @@ async def handle_receipt_photo(
             '      "name": string (item, ticket, or service description),\n'
             '      "amount": number (positive line total for this item, not unit price),\n'
             '      "category": string (MUST be one of: "Food", "Transport", "Medicine", "Buy", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
-            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "electricity", "reload", "doctor", etc.)\n'
+            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "camera", "lens", "phone", "electricity", "reload", "doctor", etc.)\n'
             "    }\n"
             "  ]\n"
             "}\n\n"
@@ -797,7 +836,7 @@ async def handle_receipt_photo(
             '- "Food": Supermarket food and groceries (milk, banana, bread, vegetables, fruits, biscuits, rice, chicken), restaurant meals, coffee, snacks.\n'
             '- "Transport": Bus tickets, train tickets, taxi, PickMe, Uber, petrol, fuel, parking, highway expressway toll.\n'
             '- "Medicine": Pharmacy bills, medicines, panadol, tablets, pills, clinic/hospital, doctor channeling.\n'
-            '- "Buy": Clothing (shirt, pants, dress), shoes, electronics (phone, charger, headphones), stationery, books, household items.\n'
+            '- "Buy": Clothing (shirt, pants, dress), shoes, electronics & accessories (phone, camera, lens, laptop, charger, headphones), stationery, books, household items.\n'
             '- "Utilities": Electricity bill, water bill, phone reload, mobile packages, internet/wifi (Dialog, Mobitel, SLT).\n'
             '- "Enjoy": Parties, movies, outings, club, entertainment.\n'
             '- "Bodim Fee": Room rent, boarding fee, hostel rent.\n'

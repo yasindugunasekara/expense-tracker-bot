@@ -816,47 +816,54 @@ async def handle_receipt_photo(
         for model_name in models_to_try:
             for attempt in range(2):
                 try:
-                    response = await asyncio.to_thread(
-                        ai_client.models.generate_content,
-                        model=model_name,
-                        contents=[
-                            prompt_instruction,
-                            types.Part.from_bytes(
-                                data=bytes(image_bytes),
-                                mime_type=mime_type,
+                    # Guard with 25-second timeout so a single request never hangs indefinitely
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            ai_client.models.generate_content,
+                            model=model_name,
+                            contents=[
+                                prompt_instruction,
+                                types.Part.from_bytes(
+                                    data=bytes(image_bytes),
+                                    mime_type=mime_type,
+                                ),
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                temperature=0,
                             ),
-                        ],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            temperature=0,
                         ),
+                        timeout=25.0,
                     )
                     if response and response.text:
                         break
+                except asyncio.TimeoutError:
+                    logger.warning("Model %s timed out after 25s. Trying next...", model_name)
+                    break
                 except Exception as exc:
                     last_error = exc
                     err_msg = str(exc)
                     if "503" in err_msg or "UNAVAILABLE" in err_msg or "high demand" in err_msg.lower():
                         logger.warning(
-                            "Model %s busy (503). Retrying after pause... (attempt %d/2)",
+                            "Model %s busy (503). Retrying after brief pause... (attempt %d/2)",
                             model_name, attempt + 1
                         )
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(1.5)
                         continue
                     else:
-                        logger.warning("Model %s failed with non-503 error: %s", model_name, exc)
+                        logger.warning("Model %s failed: %s", model_name, exc)
                         break
 
             if response and response.text:
                 break
 
         if not response or not response.text:
-            if last_error and ("503" in str(last_error) or "UNAVAILABLE" in str(last_error) or "high demand" in str(last_error).lower()):
-                await status_msg.edit_text(
-                    "⚠️ The scanning service is temporarily experiencing high server demand from Google. Please try sending the photo again in a moment."
-                )
-                return
-            raise last_error or ValueError("Empty response received from scanner.")
+            logger.error("All document scanning models failed: %s", last_error)
+            await status_msg.edit_text(
+                "⚠️ The document scanner is temporarily busy. "
+                "Please try again in a few moments, or enter your expense as text (e.g. 'bus 600')."
+            )
+            return
 
         content = response.text
 
@@ -980,43 +987,65 @@ async def handle_receipt_photo(
 
     except Exception as exc:
         logger.exception("Error processing receipt photo: %s", exc)
-        err_str = str(exc)
-        if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
+        try:
             await status_msg.edit_text(
-                "⚠️ The scanning service is temporarily experiencing high server demand from Google. Please try sending the photo again in a moment."
+                "❌ Could not process this document right now. "
+                "Please try again in a moment, or send your expense as text (e.g., 'lunch 600')."
             )
-        else:
-            await status_msg.edit_text(
-                "❌ Could not process the document. Please make sure the photo is clear and well-lit, or send text manually."
-            )
+        except Exception:
+            pass
 
+
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global fallback error handler: prevents unhandled errors from breaking the bot."""
+    logger.error("Unhandled error in telegram bot: %s", context.error, exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Something went wrong processing your request. Please try again or send your expense as text."
+            )
+        except Exception:
+            pass
 
 
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
+    # concurrent_updates=True allows Telegram to process multiple messages, photos, and commands simultaneously
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
+    # Register global error handler so unexpected errors never crash the bot
+    application.add_error_handler(global_error_handler)
+
+    # block=False ensures long-running tasks (e.g., scanning) do not block incoming text expenses or commands
+    application.add_handler(CommandHandler("start", start, block=False))
+    application.add_handler(CommandHandler("help", help_command, block=False))
     application.add_handler(
         MessageHandler(
             filters.PHOTO,
             handle_receipt_photo,
+            block=False,
         )
     )
     application.add_handler(
         MessageHandler(
             filters.Document.IMAGE,
             handle_receipt_photo,
+            block=False,
         )
     )
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_message,
+            block=False,
         )
     )
 
-    print("Telegram expense bot is running...")
+    print("Telegram expense bot is running (concurrent updates enabled)...")
     application.run_polling()
 
 

@@ -241,18 +241,24 @@ def check_due_tasks():
 
 
 
-def auto_sync_receipt_emails():
-    """Periodically check for new PickMe and HelaPay emails and import them."""
+def auto_sync_receipt_emails(trigger_label: str = "scheduled"):
+    """Check for new PickMe and HelaPay emails and import them into Supabase."""
+    logger.info("Starting receipt email sync (%s)...", trigger_label)
     try:
         from app.gmail_reader import sync_receipt_emails
-        res = sync_receipt_emails(max_emails=25)
-        if res.get("imported_count", 0) > 0:
-            logger.info(
-                "Auto-synced %d new email receipts into expenses.",
-                res["imported_count"],
-            )
+        res = sync_receipt_emails(max_emails=50)
+        logger.info(
+            "Email sync completed (%s): %d inspected, %d newly imported, %d duplicates skipped, %d ignored.",
+            trigger_label,
+            res.get("total_found", 0),
+            res.get("imported_count", 0),
+            res.get("duplicates_skipped", 0),
+            res.get("ignored_count", 0),
+        )
+        return res
     except Exception as exc:
-        logger.warning("Could not auto-sync email receipts: %s", exc)
+        logger.warning("Could not auto-sync email receipts (%s): %s", trigger_label, exc)
+        return None
 
 
 def main():
@@ -268,22 +274,39 @@ def main():
         coalesce=True,
     )
 
-    # Scan for new PickMe and HelaPay email receipts every 15 minutes.
+    # Twice-daily email receipt sync:
+    # 1. Midday at 12:00 PM (12:00 Asia/Colombo)
+    # 2. Night at 11:30 PM (23:30 Asia/Colombo)
     scheduler.add_job(
         auto_sync_receipt_emails,
-        trigger="interval",
-        minutes=15,
-        id="auto_sync_receipt_emails",
+        trigger="cron",
+        hour=12,
+        minute=0,
+        id="auto_sync_receipt_emails_12pm",
+        name="Receipt Email Sync (12:00 PM)",
         max_instances=1,
         coalesce=True,
+        kwargs={"trigger_label": "12:00 PM Midday"},
+    )
+    scheduler.add_job(
+        auto_sync_receipt_emails,
+        trigger="cron",
+        hour=23,
+        minute=30,
+        id="auto_sync_receipt_emails_1130pm",
+        name="Receipt Email Sync (11:30 PM)",
+        max_instances=1,
+        coalesce=True,
+        kwargs={"trigger_label": "11:30 PM Night"},
     )
 
     logger.info("Expense automation scheduler started.")
     logger.info("Timezone: Asia/Colombo")
+    logger.info("Email Receipt Sync Schedule: Twice daily at 12:00 PM and 11:30 PM")
 
     # Run immediate checks on startup
     check_due_tasks()
-    auto_sync_receipt_emails()
+    auto_sync_receipt_emails("Startup Check")
 
     scheduler.start()
 

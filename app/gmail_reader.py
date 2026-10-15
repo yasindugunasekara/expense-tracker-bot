@@ -509,5 +509,83 @@ def find_receipt_emails(max_results: int = 10):
     print("=" * 65 + "\n")
 
 
+def start_email_sync_scheduler():
+    """Run a dedicated background scheduler for twice-daily email receipt fetching."""
+    from apscheduler.schedulers.blocking import BlockingScheduler
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Colombo")
+    scheduler = BlockingScheduler(timezone=tz)
+
+    print("\n" + "=" * 65)
+    print("EXPENSA AUTOMATED EMAIL RECEIPT SCHEDULER")
+    print("=" * 65)
+    print("Schedule: Twice daily (Asia/Colombo)")
+    print("  1. Midday : 12:00 PM (12:00)")
+    print("  2. Night  : 11:30 PM (23:30)")
+    print("=" * 65)
+
+    def scheduled_run(trigger_name: str):
+        now_str = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n[{now_str}] Executing {trigger_name} email sync...")
+        res = sync_receipt_emails(max_emails=50, dry_run=False)
+        print(
+            f"Finished {trigger_name}: {res['total_found']} inspected, "
+            f"{res['imported_count']} newly imported, {res['duplicates_skipped']} duplicates skipped."
+        )
+
+    scheduler.add_job(
+        scheduled_run,
+        trigger="cron",
+        hour=12,
+        minute=0,
+        id="email_sync_12pm",
+        name="Receipt Email Sync (12:00 PM)",
+        kwargs={"trigger_name": "12:00 PM Midday Sync"},
+    )
+    scheduler.add_job(
+        scheduled_run,
+        trigger="cron",
+        hour=23,
+        minute=30,
+        id="email_sync_1130pm",
+        name="Receipt Email Sync (11:30 PM)",
+        kwargs={"trigger_name": "11:30 PM Night Sync"},
+    )
+
+    # Initial sync on startup
+    print("Running initial sync on scheduler startup...")
+    scheduled_run("Startup Check")
+
+    print("\nScheduler active. Waiting for scheduled triggers (Ctrl+C to stop)...")
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("\nAutomated receipt email scheduler stopped.")
+
+
 if __name__ == "__main__":
-    find_receipt_emails(max_results=50)
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Expensa Gmail Receipt Fetcher & Synchronizer",
+    )
+    parser.add_argument(
+        "--schedule",
+        "-s",
+        action="store_true",
+        help="Run continuously on the twice-daily automated schedule (12:00 PM & 11:30 PM Colombo time)",
+    )
+    parser.add_argument(
+        "--max",
+        "-m",
+        type=int,
+        default=50,
+        help="Maximum emails to inspect in a single sync run (default: 50)",
+    )
+    args = parser.parse_args()
+
+    if args.schedule:
+        start_email_sync_scheduler()
+    else:
+        find_receipt_emails(max_results=args.max)

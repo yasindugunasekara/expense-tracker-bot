@@ -521,8 +521,8 @@ def start_email_sync_scheduler():
     print("EXPENSA AUTOMATED EMAIL RECEIPT SCHEDULER")
     print("=" * 65)
     print("Schedule: Twice daily (Asia/Colombo)")
-    print("  1. Midday : 12:00 PM (12:00)")
-    print("  2. Night  : 11:30 PM (23:30)")
+    print("  1. Afternoon : 2:00 PM (14:00)")
+    print("  2. Night     : 11:30 PM (23:30)")
     print("=" * 65)
 
     def scheduled_run(trigger_name: str):
@@ -537,11 +537,11 @@ def start_email_sync_scheduler():
     scheduler.add_job(
         scheduled_run,
         trigger="cron",
-        hour=12,
+        hour=14,
         minute=0,
-        id="email_sync_12pm",
-        name="Receipt Email Sync (12:00 PM)",
-        kwargs={"trigger_name": "12:00 PM Midday Sync"},
+        id="email_sync_2pm",
+        name="Receipt Email Sync (2:00 PM)",
+        kwargs={"trigger_name": "2:00 PM Afternoon Sync"},
     )
     scheduler.add_job(
         scheduled_run,
@@ -574,7 +574,7 @@ if __name__ == "__main__":
         "--schedule",
         "-s",
         action="store_true",
-        help="Run continuously on the twice-daily automated schedule (12:00 PM & 11:30 PM Colombo time)",
+        help="Run continuously on the twice-daily automated schedule (2:00 PM & 11:30 PM Colombo time)",
     )
     parser.add_argument(
         "--max",

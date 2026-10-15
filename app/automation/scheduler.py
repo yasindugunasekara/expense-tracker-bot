@@ -275,18 +275,18 @@ def main():
     )
 
     # Twice-daily email receipt sync:
-    # 1. Midday at 12:00 PM (12:00 Asia/Colombo)
+    # 1. Afternoon at 2:00 PM (14:00 Asia/Colombo)
     # 2. Night at 11:30 PM (23:30 Asia/Colombo)
     scheduler.add_job(
         auto_sync_receipt_emails,
         trigger="cron",
-        hour=12,
+        hour=14,
         minute=0,
-        id="auto_sync_receipt_emails_12pm",
-        name="Receipt Email Sync (12:00 PM)",
+        id="auto_sync_receipt_emails_2pm",
+        name="Receipt Email Sync (2:00 PM)",
         max_instances=1,
         coalesce=True,
-        kwargs={"trigger_label": "12:00 PM Midday"},
+        kwargs={"trigger_label": "2:00 PM Afternoon"},
     )
     scheduler.add_job(
         auto_sync_receipt_emails,
@@ -302,7 +302,7 @@ def main():
 
     logger.info("Expense automation scheduler started.")
     logger.info("Timezone: Asia/Colombo")
-    logger.info("Email Receipt Sync Schedule: Twice daily at 12:00 PM and 11:30 PM")
+    logger.info("Email Receipt Sync Schedule: Twice daily at 2:00 PM and 11:30 PM")
 
     # Run immediate checks on startup
     check_due_tasks()

@@ -77,6 +77,64 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
             ],
         ),
         (
+            "Rental",
+            [
+                "rent lens", "rent scooter", "rent camera", "rent bike", "rent car",
+                "rent vehicle", "rent van", "rent dress", "rent suit", "rent equipment",
+                "rent room", "rent house", "rent apartment", "rent hall", "rent sound",
+                "rent lights", "rent drone", "lens rent", "scooter rent", "camera rent",
+                "bike rent", "car rent", "vehicle rent", "equipment rent", "scooter rental",
+                "bike rental", "car rental", "camera rental", "lens rental", "drone rent",
+                "rental", "rent", "rented", "renting", "hire", "hired", "hiring", "lease", "leasing",
+            ],
+        ),
+        (
+            "Fitness",
+            [
+                "gym fee", "gym membership", "gym package", "gym sub", "gym subscription",
+                "gym", "fitness", "workout", "crossfit", "bodybuilding", "calisthenics",
+                "yoga class", "yoga", "pilates", "zumba", "aerobics", "swimming pool",
+                "swimming", "personal trainer", "trainer fee", "trainer", "pt fee",
+                "badminton court", "badminton", "futsal court", "futsal", "cricket net",
+                "cricket ground", "tennis court", "tennis", "sports", "whey protein",
+                "whey", "protein powder", "protein", "creatine", "pre-workout", "preworkout",
+                "supplements", "supplement",
+            ],
+        ),
+        (
+            "Fund",
+            [
+                "welfare fund", "batch fund", "class fund", "society fund", "club fund",
+                "office fund", "department fund", "charity fund", "memorial fund",
+                "fund collection", "fund contribution", "fund fee", "fund", "funds",
+                "donation", "donate", "donations", "charity", "alms", "dana",
+                "pinketa", "pin keta", "seettuwa", "seettu", "chitty", "contribution",
+            ],
+        ),
+        (
+            "Subscription",
+            [
+                "gemini advanced", "gemini sub", "gemini", "chatgpt plus", "chatgpt sub",
+                "chatgpt", "chat gpt", "openai", "claude pro", "claude sub", "claude",
+                "anthropic", "github copilot", "copilot", "cursor pro", "cursor sub",
+                "cursor", "midjourney", "perplexity", "aws", "amazon web services",
+                "azure", "google cloud", "gcp", "digitalocean", "digital ocean",
+                "vercel", "heroku", "render", "github", "cloudflare", "domain renewal",
+                "domain", "web hosting", "hosting", "api credits", "spotify premium",
+                "spotify sub", "spotify", "netflix sub", "netflix", "youtube premium",
+                "youtube sub", "youtube", "amazon prime", "prime video", "prime sub",
+                "prime", "apple music", "apple tv", "apple sub", "apple one", "disney", "disney+",
+                "hulu", "deezer", "soundcloud", "google one", "google drive",
+                "icloud storage", "icloud", "dropbox", "onedrive", "microsoft 365",
+                "office 365", "notion plus", "notion sub", "notion", "canva pro",
+                "canva", "adobe creative cloud", "adobe sub", "adobe", "figma pro",
+                "figma sub", "figma", "patreon", "medium subscription", "substack",
+                "linkedin premium", "twitter blue", "x premium", "nordvpn", "expressvpn",
+                "surfshark", "vpn sub", "vpn", "subscription", "subscriptions",
+                "subscribed", "monthly sub", "yearly sub", "annual sub", "sub fee",
+            ],
+        ),
+        (
             "Medicine",
             [
                 "pharmacy bill", "meet doctor", "doctor fee", "doctor", "medicine", "medicines",
@@ -294,6 +352,155 @@ def clean_short_subcategory(category: str, raw_tag: str | None, title: str) -> s
             return raw_tag.lower()
         return "item"
 
+    # Rental
+    if category == "Rental":
+        rent_prefix_pattern = r"^(?:rent|rented|renting|rental|hire|hired|hiring|lease|leased)\s+(?:a\s+|an\s+|new\s+|the\s+)?(.+)$"
+        m = re.match(rent_prefix_pattern, title.strip(), re.IGNORECASE)
+        if m:
+            extracted_item = m.group(1).strip().lower()
+            for kw in [
+                "lens", "scooter", "camera", "bike", "bicycle", "car", "van", "vehicle",
+                "tripod", "light", "lights", "sound", "mic", "microphone", "dress", "suit",
+                "costume", "room", "house", "hall", "equipment", "drone"
+            ]:
+                if kw in extracted_item:
+                    if kw in {"bicycle", "bike"}:
+                        return "bike"
+                    if kw in {"lights", "light"}:
+                        return "lights"
+                    if kw in {"microphone", "mic"}:
+                        return "mic"
+                    return kw
+            return extracted_item
+
+        rent_suffix_pattern = r"^(.+?)\s+(?:rent|rental|rented|hire|lease)$"
+        m_suff = re.match(rent_suffix_pattern, title.strip(), re.IGNORECASE)
+        if m_suff:
+            extracted_item = m_suff.group(1).strip().lower()
+            for kw in [
+                "lens", "scooter", "camera", "bike", "bicycle", "car", "van", "vehicle",
+                "tripod", "light", "lights", "sound", "mic", "microphone", "dress", "suit",
+                "costume", "room", "house", "hall", "equipment", "drone"
+            ]:
+                if kw in extracted_item:
+                    if kw in {"bicycle", "bike"}:
+                        return "bike"
+                    if kw in {"lights", "light"}:
+                        return "lights"
+                    if kw in {"microphone", "mic"}:
+                        return "mic"
+                    return kw
+            return extracted_item
+
+        for kw in [
+            "lens", "scooter", "camera", "bike", "car", "van", "vehicle",
+            "drone", "tripod", "dress", "suit", "equipment"
+        ]:
+            if kw in text:
+                return kw
+
+        if raw_tag and raw_tag.lower() not in {"rent", "rental", "rented", "hire", "lease"}:
+            return raw_tag.lower()
+        return "rental"
+
+    # Fitness
+    if category == "Fitness":
+        if "gym" in text:
+            return "gym"
+        if "workout" in text or "crossfit" in text:
+            return "workout"
+        if "yoga" in text:
+            return "yoga"
+        if "pilates" in text:
+            return "pilates"
+        if "swimming" in text:
+            return "swimming"
+        if "trainer" in text or "pt fee" in text:
+            return "trainer"
+        if "badminton" in text:
+            return "badminton"
+        if "futsal" in text:
+            return "futsal"
+        if "tennis" in text:
+            return "tennis"
+        if any(k in text for k in ("protein", "whey", "creatine", "supplement")):
+            return "supplements"
+        if raw_tag and raw_tag.lower() not in {"fitness", "sports"}:
+            return raw_tag.lower()
+        return "fitness"
+
+    # Fund
+    if category == "Fund":
+        if "batch" in text:
+            return "batch fund"
+        if "class" in text:
+            return "class fund"
+        if "welfare" in text:
+            return "welfare fund"
+        if "society" in text:
+            return "society fund"
+        if "club" in text:
+            return "club fund"
+        if "office" in text:
+            return "office fund"
+        if "charity" in text:
+            return "charity"
+        if "donation" in text or "donate" in text or "dana" in text or "alms" in text or "pinketa" in text:
+            return "donation"
+        if "seettu" in text or "chitty" in text:
+            return "seettu"
+        if raw_tag and raw_tag.lower() not in {"fund", "funds"}:
+            return raw_tag.lower()
+        return "fund"
+
+    # Subscription
+    if category == "Subscription":
+        if "aws" in text or "amazon web" in text:
+            return "aws"
+        if "gemini" in text:
+            return "gemini"
+        if "chatgpt" in text or "chat gpt" in text or "openai" in text:
+            return "chatgpt"
+        if "claude" in text or "anthropic" in text:
+            return "claude"
+        if "copilot" in text or "github" in text:
+            return "github"
+        if "cursor" in text:
+            return "cursor"
+        if "midjourney" in text:
+            return "midjourney"
+        if "perplexity" in text:
+            return "perplexity"
+        if "spotify" in text:
+            return "spotify"
+        if "netflix" in text:
+            return "netflix"
+        if "youtube" in text:
+            return "youtube"
+        if "prime" in text:
+            return "prime"
+        if "icloud" in text or "apple" in text:
+            return "icloud"
+        if "google" in text:
+            return "google"
+        if "adobe" in text:
+            return "adobe"
+        if "canva" in text:
+            return "canva"
+        if "figma" in text:
+            return "figma"
+        if "notion" in text:
+            return "notion"
+        if "dropbox" in text:
+            return "dropbox"
+        if "vpn" in text:
+            return "vpn"
+        if "hosting" in text or "domain" in text:
+            return "hosting"
+        if raw_tag and raw_tag.lower() not in {"sub", "subscription", "subscriptions"}:
+            return raw_tag.lower()
+        return "subscription"
+
     # Enjoy / Bodim / Loan
     if "party" in text:
         return "party"
@@ -458,6 +665,12 @@ async def help_command(
         "• electricity 4500\n"
         "• buy shirt 2500\n"
         "• buy phone 40000\n"
+        "• rent lens 2000\n"
+        "• rent scooter 3500\n"
+        "• gym fee 3500\n"
+        "• batch fund 1000\n"
+        "• aws 4500\n"
+        "• gemini 6000\n"
         "• perera bday party 3000\n"
         "• meet doctor 2000\n"
         "• loan to amal 5000\n\n"
@@ -814,8 +1027,8 @@ async def handle_receipt_photo(
             "    {\n"
             '      "name": string (item, ticket, or service description),\n'
             '      "amount": number (positive line total for this item, not unit price),\n'
-            '      "category": string (MUST be one of: "Food", "Transport", "Medicine", "Buy", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
-            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "camera", "lens", "phone", "electricity", "reload", "doctor", etc.)\n'
+            '      "category": string (MUST be one of: "Food", "Transport", "Medicine", "Buy", "Rental", "Fitness", "Fund", "Subscription", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
+            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "camera", "lens", "phone", "scooter", "gym", "aws", "gemini", "batch fund", "electricity", "reload", "doctor", etc.)\n'
             "    }\n"
             "  ]\n"
             "}\n\n"
@@ -837,6 +1050,10 @@ async def handle_receipt_photo(
             '- "Transport": Bus tickets, train tickets, taxi, PickMe, Uber, petrol, fuel, parking, highway expressway toll.\n'
             '- "Medicine": Pharmacy bills, medicines, panadol, tablets, pills, clinic/hospital, doctor channeling.\n'
             '- "Buy": Clothing (shirt, pants, dress), shoes, electronics & accessories (phone, camera, lens, laptop, charger, headphones), stationery, books, household items.\n'
+            '- "Rental": Item/equipment/vehicle rentals (rent lens, rent camera, rent scooter, rent bike, car hire, equipment rental).\n'
+            '- "Fitness": Gym membership, gym fees, fitness workout, yoga, swimming, badminton, sports, protein supplements.\n'
+            '- "Fund": Welfare fund, batch fund, class fund, department fund, society/club fund, donations, charity, seettu.\n'
+            '- "Subscription": Digital/cloud subscriptions (AWS, Gemini, ChatGPT, Claude, GitHub, Spotify, Netflix, YouTube Premium, iCloud, Adobe).\n'
             '- "Utilities": Electricity bill, water bill, phone reload, mobile packages, internet/wifi (Dialog, Mobitel, SLT).\n'
             '- "Enjoy": Parties, movies, outings, club, entertainment.\n'
             '- "Bodim Fee": Room rent, boarding fee, hostel rent.\n'
@@ -957,7 +1174,10 @@ async def handle_receipt_photo(
                     raw_sub = local_sub or it.get("subcategory")
                 else:
                     gemini_cat = it.get("category")
-                    valid_cats = {"Bodim Fee", "Medicine", "Loan", "Enjoy", "Utilities", "Transport", "Food", "Buy"}
+                    valid_cats = {
+                        "Bodim Fee", "Medicine", "Loan", "Enjoy", "Utilities",
+                        "Transport", "Food", "Buy", "Rental", "Fitness", "Fund", "Subscription"
+                    }
                     category = gemini_cat if gemini_cat in valid_cats else "Other"
                     raw_sub = it.get("subcategory")
 

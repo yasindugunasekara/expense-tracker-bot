@@ -157,8 +157,31 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
             [
                 "after exam party", "birthday party", "pool party", "birthday",
                 "bday party", "bday", "party", "fun", "outing", "hangout",
-                "celebration", "treat", "trip", "club", "concert", "drinks",
+                "celebration", "treat", "trip", "club", "concert",
                 "game", "gaming", "movie", "cinema", "gathering",
+            ],
+        ),
+        (
+            "Drink",
+            [
+                # Multi-word drink actions & phrases (longest matched first)
+                "drink milk", "drink coffee", "drink coffiee", "drink tea",
+                "drink juice", "drink water", "drink soda", "drink beer",
+                "drink wine", "drank milk", "drank coffee", "drank coffiee",
+                "drank tea", "drank juice", "drank water", "drinking milk",
+                "drinking coffee", "drinking tea", "drinking water",
+                "cool drink", "soft drink", "energy drink", "water bottle",
+                "mineral water", "drinking water", "fruit juice", "fresh juice",
+                "lime juice", "orange juice", "apple juice", "mango juice",
+                "iced coffee", "ice coffee", "cold coffee", "milk shake",
+                "milkshake", "hot chocolate", "green tea", "black tea",
+                "ginger tea", "milk tea", "plain tea", "faluda", "bubble tea",
+                "boba tea", "boba",
+                # Action & beverage keywords
+                "drink", "drinks", "drank", "drinking", "beverage", "beverages",
+                "coffee", "coffiee", "tea", "juice", "smoothie",
+                "soda", "coke", "pepsi", "fanta", "sprite", "milo", "nescafe",
+                "beer", "wine", "liquor",
             ],
         ),
         (
@@ -176,16 +199,16 @@ def detect_category_and_keyword(title: str) -> tuple[str, str | None]:
                 "tuk tuk", "three wheeler", "threewheeler", "threewheel",
                 "bus", "train", "pickme", "uber", "petrol", "fuel", "bike",
                 "taxi", "tuk", "van", "highway", "diesel", "parking",
-                "expressway","petral",
+                "expressway","petral","metro bus"
             ],
         ),
         (
             "Food",
             [
-                "short eats", "water bottle", "cool drink", "ice cream",
+                "short eats", "ice cream",
                 "lunch", "dinner", "breakfast", "food", "restaurant",
-                "coffee", "tea", "snack", "snacks", "kottu", "rice",
-                "curry", "hoppers", "bakery", "cafe", "bites", "juice",
+                "snack", "snacks", "kottu", "rice",
+                "curry", "hoppers", "bakery", "cafe", "bites",
                 "pizza", "burger", "dessert", "milk", "banana", "bananas",
                 "bread", "fruits", "fruit", "vegetables", "egg", "eggs",
                 "groceries", "grocery", "cheese", "butter", "biscuit",
@@ -247,6 +270,50 @@ def clean_short_subcategory(category: str, raw_tag: str | None, title: str) -> s
         return "highway"
     if "ticket" in text and category == "Transport":
         return "ticket"
+
+    # Drink
+    if category == "Drink":
+        drink_pattern = r"^(?:drink|drinks|drank|drinking)\s+(?:a\s+|an\s+|the\s+)?(.+)$"
+        m = re.match(drink_pattern, title.strip(), re.IGNORECASE)
+        if m:
+            extracted_item = m.group(1).strip().lower()
+            for kw in [
+                "coffee", "coffiee", "tea", "milk", "juice", "water",
+                "beer", "wine", "liquor", "soda", "coke", "pepsi", "fanta", "sprite",
+                "milo", "nescafe", "smoothie", "shake", "faluda", "boba"
+            ]:
+                if kw in extracted_item:
+                    if kw == "coffiee":
+                        return "coffee"
+                    if kw in {"coke", "pepsi", "fanta", "sprite"}:
+                        return "soda"
+                    if kw == "nescafe":
+                        return "coffee"
+                    if kw == "shake":
+                        return "smoothie"
+                    return kw
+            return extracted_item
+
+        for kw in [
+            "coffee", "coffiee", "tea", "milk", "juice", "water",
+            "beer", "wine", "liquor", "soda", "coke", "pepsi", "fanta", "sprite",
+            "milo", "nescafe", "smoothie", "shake", "faluda", "boba",
+            "cool drink", "soft drink", "energy drink"
+        ]:
+            if kw in text:
+                if kw == "coffiee":
+                    return "coffee"
+                if kw in {"coke", "pepsi", "fanta", "sprite"}:
+                    return "soda"
+                if kw == "nescafe":
+                    return "coffee"
+                if kw == "shake":
+                    return "smoothie"
+                return kw
+
+        if raw_tag and raw_tag.lower() not in {"drink", "drinks", "drank", "drinking"}:
+            return raw_tag.lower()
+        return "drink"
 
     # Food
     if "milk" in text:
@@ -661,6 +728,7 @@ async def help_command(
         "💸 Text Expenses (description amount):\n"
         "• bus 1000\n"
         "• lunch 800\n"
+        "• drink coffee 250\n"
         "• bodim fee 15000\n"
         "• electricity 4500\n"
         "• buy shirt 2500\n"
@@ -1027,8 +1095,8 @@ async def handle_receipt_photo(
             "    {\n"
             '      "name": string (item, ticket, or service description),\n'
             '      "amount": number (positive line total for this item, not unit price),\n'
-            '      "category": string (MUST be one of: "Food", "Transport", "Medicine", "Buy", "Rental", "Fitness", "Fund", "Subscription", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
-            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "camera", "lens", "phone", "scooter", "gym", "aws", "gemini", "batch fund", "electricity", "reload", "doctor", etc.)\n'
+            '      "category": string (MUST be one of: "Food", "Drink", "Transport", "Medicine", "Buy", "Rental", "Fitness", "Fund", "Subscription", "Utilities", "Enjoy", "Bodim Fee", "Other"),\n'
+            '      "subcategory": string or null (MUST be a short name keyword tag, e.g. "bus", "train", "milk", "coffee", "tea", "banana", "bread", "medicine", "panadol", "petrol", "shirt", "camera", "lens", "phone", "scooter", "gym", "aws", "gemini", "batch fund", "electricity", "reload", "doctor", etc.)\n'
             "    }\n"
             "  ]\n"
             "}\n\n"
@@ -1046,7 +1114,8 @@ async def handle_receipt_photo(
             "- DO NOT guess or default to today's date if a printed date exists on the document! Extract the actual printed date.\n"
             "- Always place the exact text as seen on the receipt in 'raw_date' and the converted ISO format in 'date'.\n\n"
             "Categorization rules:\n"
-            '- "Food": Supermarket food and groceries (milk, banana, bread, vegetables, fruits, biscuits, rice, chicken), restaurant meals, coffee, snacks.\n'
+            '- "Food": Supermarket food and groceries (banana, bread, vegetables, fruits, biscuits, rice, chicken), restaurant meals, snacks.\n'
+            '- "Drink": Water, coffee, tea, fruit juices, milk drinks, soft drinks, energy drinks, soda, beverages.\n'
             '- "Transport": Bus tickets, train tickets, taxi, PickMe, Uber, petrol, fuel, parking, highway expressway toll.\n'
             '- "Medicine": Pharmacy bills, medicines, panadol, tablets, pills, clinic/hospital, doctor channeling.\n'
             '- "Buy": Clothing (shirt, pants, dress), shoes, electronics & accessories (phone, camera, lens, laptop, charger, headphones), stationery, books, household items.\n'
@@ -1176,7 +1245,7 @@ async def handle_receipt_photo(
                     gemini_cat = it.get("category")
                     valid_cats = {
                         "Bodim Fee", "Medicine", "Loan", "Enjoy", "Utilities",
-                        "Transport", "Food", "Buy", "Rental", "Fitness", "Fund", "Subscription"
+                        "Transport", "Food", "Drink", "Buy", "Rental", "Fitness", "Fund", "Subscription"
                     }
                     category = gemini_cat if gemini_cat in valid_cats else "Other"
                     raw_sub = it.get("subcategory")

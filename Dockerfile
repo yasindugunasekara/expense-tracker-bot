@@ -1,0 +1,41 @@
+FROM python:3.12-slim
+
+# Prevent Python from writing bytecode and enable immediate log flushes
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Colombo \
+    DEBIAN_FRONTEND=noninteractive
+
+# Install essential system utilities:
+# - tzdata: ensures Asia/Colombo timezone is accurately set for APScheduler
+# - curl: provides health check capabilities for container orchestrators
+# - supervisor: enables multi-process supervision (API, Bot, Scheduler) in a single low-RAM container
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
+    curl \
+    supervisor \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies first for optimal Docker layer caching
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy configuration and entrypoint scripts
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Copy application source code
+COPY app/ /app/app/
+
+# Expose ports:
+# 8000: FastAPI backend
+# 8001: FastMCP server (SSE mode)
+EXPOSE 8000 8001
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

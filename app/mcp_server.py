@@ -18,9 +18,10 @@ from app.core.database import supabase
 
 mcp = FastMCP("expense-tracker")
 
-API_BASE_URL = os.getenv(
-    "EXPENSE_API_URL",
-    "http://127.0.0.1:8000",
+API_BASE_URL = (
+    os.getenv("EXPENSE_API_URL")
+    or os.getenv("API_BASE_URL")
+    or "http://127.0.0.1:8000"
 ).rstrip("/")
 
 REQUEST_TIMEOUT = 15.0
@@ -612,5 +613,10 @@ async def sync_email_receipts(max_emails: int = 25) -> str:
 
 
 if __name__ == "__main__":
-
-    mcp.run(transport="stdio")
+    transport = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+    if transport in ("sse", "streamable-http"):
+        mcp.settings.host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.settings.port = int(os.getenv("MCP_PORT", "8001"))
+        mcp.run(transport=transport)
+    else:
+        mcp.run(transport="stdio")

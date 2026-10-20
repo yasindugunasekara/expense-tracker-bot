@@ -9,6 +9,7 @@ router = APIRouter(tags=["Health"])
 
 
 @router.get("/")
+@router.get("/health")
 def home():
     """Root health and welcome endpoint."""
     return {

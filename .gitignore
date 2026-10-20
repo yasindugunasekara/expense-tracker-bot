@@ -30,3 +30,13 @@ htmlcov/
 # IDE settings
 .vscode/
 .idea/
+
+expensa-ssh-key.pem
+
+
+.env
+token.json
+credentials.json
+*.pem
+.venv/
+__pycache__/

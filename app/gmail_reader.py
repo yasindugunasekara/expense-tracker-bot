@@ -9,6 +9,7 @@ from html.parser import HTMLParser
 
 
 from app.core.database import supabase
+from app.automation.telegram_notifications import queue_notification, deliver_pending
 
 class HTMLTextExtractor(HTMLParser):
     """Cleanly extracts visible text from HTML email bodies while ignoring code/style tags."""
@@ -308,7 +309,10 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with FileLock(str(path.parent / "receipt-sync.lock"), timeout=0):
-            return _sync_receipt_emails(max_emails, dry_run)
+            result = _sync_receipt_emails(max_emails, dry_run)
+            if not dry_run:
+                result["telegram_notifications"] = deliver_pending()
+            return result
     except Timeout:
         return {"success": False, "busy": True, "message": "Receipt import already running; retry later."}
 
@@ -418,6 +422,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
             recovered = supabase.table("expenses").select("id").like("notes", f"%{marker}%").limit(1).execute()
             if recovered.data:
                 if not dry_run:
+                    queue_notification(msg_id, {**parsed, "expense_id": recovered.data[0]["id"]})
                     supabase.table("email_imports").upsert({"provider": "gmail", "message_id": msg_id, "status": "imported", "expense_id": recovered.data[0]["id"]}, on_conflict="message_id").execute()
                 skipped_duplicates += 1
                 continue
@@ -466,6 +471,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                 exp_res = supabase.table("expenses").insert(expense_payload).execute()
                 created_expense = exp_res.data[0]
                 new_expense_id = created_expense["id"]
+                queue_notification(msg_id, {**parsed, "expense_id": new_expense_id})
 
                 # 4. Record successful import in email_imports
                 supabase.table("email_imports").upsert(

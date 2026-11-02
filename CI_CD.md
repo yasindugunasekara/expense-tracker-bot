@@ -50,3 +50,7 @@ PickMe and HelaPay imports include transaction dates from January 1, 2026 onward
 ## Hourly receipt fetching and Spam
 
 The production scheduler and standalone Gmail scheduler fetch at minute 00 of every hour in Asia/Colombo, with startup catch-up, coalescing and overlap protection. Genuine receipts in Spam are considered only when the provider sender has aligned Gmail DKIM or DMARC verification. Trash remains excluded. This leaves mailbox labels unchanged.
+
+## Telegram confirmations for email imports
+
+Newly inserted email expenses queue a Telegram confirmation for TELEGRAM_ALLOWED_USER_ID, using the configured bot token. Messages show description, LKR amount, category, optional tag, transaction date and Email import source. Existing imported receipts are skipped without replaying historical notifications. Dry runs send nothing. A SQLite outbox in the persistent gmail-state directory deduplicates Gmail message IDs and retries failed deliveries on later syncs, with backoff and five attempts. Telegram delivery failure does not discard a saved expense. A process interruption after Telegram accepts a message but before its sent status is recorded can require manual reconciliation.

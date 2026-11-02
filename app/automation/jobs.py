@@ -143,23 +143,12 @@ def get_category_spending_details(
     Fetch all expenses for [start_date, end_date_exclusive), optionally filtered by category.
     Returns (total_spent, expenses_list).
     """
-    query = (
-        supabase.table("expenses")
-        .select("id,title,amount,category,subcategory,expense_date")
-        .gte("expense_date", start_date.isoformat())
-        .lt("expense_date", end_date_exclusive.isoformat())
-        .order("expense_date", desc=True)
-        .order("id", desc=True)
-    )
-
+    from app.expense_totals import read_expenses, total_amount
     clean_category = (category or "").strip()
-    if clean_category and clean_category.lower() not in {"all", "all categories", "none"}:
-        query = query.ilike("category", clean_category)
-
-    result = query.execute()
-    expenses = result.data or []
-    total_spent = sum(float(item.get("amount") or 0) for item in expenses)
-    return total_spent, expenses
+    if clean_category.lower() in {"all", "all categories", "none"}:
+        clean_category = ""
+    expenses = read_expenses(start_date, end_date_exclusive, category=clean_category)
+    return float(total_amount(expenses)), expenses
 
 
 def send_threshold_alert_job(task: dict, now: datetime | None = None) -> dict:

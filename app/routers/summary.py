@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException
 from postgrest.exceptions import APIError
 
-from app.core.database import supabase
+from app.expense_totals import read_expenses, total_amount
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -16,7 +16,7 @@ def expense_summary(
     end_date: date,
     event_id: int | None = None,
 ):
-    """Retrieve summarized expense metrics between start_date and end_date."""
+    """Sum expenses by expense_date; start inclusive, end exclusive (Colombo calendar dates)."""
     if end_date <= start_date:
         raise HTTPException(
             status_code=400,
@@ -31,14 +31,8 @@ def expense_summary(
     )
 
     try:
-        result = supabase.rpc(
-            "get_expense_summary",
-            {
-                "p_start_date": start_date.isoformat(),
-                "p_end_date": end_date.isoformat(),
-                "p_event_id": event_id,
-            },
-        ).execute()
+        rows = read_expenses(start_date, end_date, event_id=event_id)
+        summary_data = {"total_spent": total_amount(rows), "expense_count": len(rows)}
     except APIError as api_err:
         logger.error("Supabase APIError while calculating summary: %s", api_err.message)
         raise HTTPException(
@@ -52,7 +46,6 @@ def expense_summary(
             detail="Could not retrieve expense summary. Check server logs.",
         )
 
-    summary_data = result.data[0] if (result.data and len(result.data) > 0) else {}
 
     return {
         "start_date": start_date.isoformat(),

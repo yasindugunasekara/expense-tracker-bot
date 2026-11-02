@@ -1,13 +1,16 @@
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from html import escape
 
 
 def format_lkr(value) -> str:
     try:
-        amount = float(value or 0)
+        amount = Decimal(str(value))
+        if not amount.is_finite():
+            raise ValueError("Nonfinite amount")
         return f"LKR {amount:,.2f}"
-    except (ValueError, TypeError):
-        return "LKR 0.00"
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValueError("Invalid expense total") from None
 
 
 def build_summary_email(
@@ -17,10 +20,11 @@ def build_summary_email(
     summary_data: dict,
 ) -> str:
     # Your API returns the totals inside the "summary" object.
-    metrics = summary_data.get("summary") or {}
-
-    total_spent = format_lkr(metrics.get("total_spent", 0))
-    expense_count = int(metrics.get("expense_count") or 0)
+    metrics = summary_data.get("summary")
+    if not isinstance(metrics, dict) or not {"total_spent", "expense_count"} <= metrics.keys():
+        raise ValueError("Summary must include total_spent and expense_count")
+    total_spent = format_lkr(metrics["total_spent"])
+    expense_count = int(metrics["expense_count"])
 
     last_included_date = (
         end_date_exclusive.fromordinal(

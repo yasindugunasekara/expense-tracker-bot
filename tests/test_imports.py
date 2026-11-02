@@ -42,3 +42,12 @@ def test_receipt_date_and_parser():
     parsed=reader.parse_pickme_receipt("PickMe Trip ID 123", "Trip ID 123 Paid Amount LKR 1,234.50", "Sun, 01 Nov 2026 20:00:00 +0000")
     assert parsed["amount"]==1234.5 and parsed["expense_date"]=="2026-11-02"
     with pytest.raises(ValueError):reader.receipt_header_date("invalid")
+
+
+def test_overlapping_import_reports_busy(monkeypatch,tmp_path):
+    from app import gmail_auth
+    from filelock import FileLock
+    monkeypatch.setattr(gmail_auth,"token_path",lambda:tmp_path/"token.json")
+    with FileLock(str(tmp_path/"receipt-sync.lock")):
+        result=reader.sync_receipt_emails()
+    assert result["busy"] and not result["success"]

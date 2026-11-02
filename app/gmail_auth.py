@@ -1,5 +1,6 @@
 """Shared headless Gmail authorization; interactive consent is an explicit command."""
-import json
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 import os
 import tempfile
 from pathlib import Path
@@ -63,7 +64,9 @@ def get_credentials(required_scopes):
 
 
 def get_gmail_service(required_scopes=None):
-    return build("gmail", "v1", credentials=get_credentials(required_scopes or SCOPES), cache_discovery=False)
+    credentials = get_credentials(required_scopes or SCOPES)
+    http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=30))
+    return build("gmail", "v1", http=http, cache_discovery=False)
 
 
 def authorize():

@@ -280,6 +280,9 @@ def auto_sync_receipt_emails(trigger_label: str = "scheduled"):
     try:
         from app.gmail_reader import sync_receipt_emails
         res = sync_receipt_emails(max_emails=50)
+        if res.get("busy"):
+            logger.info("Receipt import already running; skipping overlapping trigger")
+            return res
         logger.info(
             "Email sync completed (%s): %d inspected, %d newly imported, %d duplicates skipped, %d ignored.",
             trigger_label,
@@ -341,8 +344,12 @@ def main():
 
     # Run immediate checks on startup
     check_due_tasks()
-    auto_sync_receipt_emails("Startup Check")
-
+    # Start imports in the scheduler's thread pool so catch-up never blocks task delivery.
+    scheduler.add_job(
+        auto_sync_receipt_emails, trigger="date", run_date=datetime.now(TIMEZONE),
+        id="startup_receipt_sync", kwargs={"trigger_label": "Startup Check"},
+        max_instances=1, misfire_grace_time=300,
+    )
     scheduler.start()
 
 

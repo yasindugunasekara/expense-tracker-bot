@@ -1,11 +1,10 @@
 import base64
-import os
+import logging
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
-from pathlib import Path
 
 
 from app.core.database import supabase
@@ -279,12 +278,15 @@ def detect_and_parse_receipt(sender: str, subject: str, norm_text: str, date_hea
 
 
 def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
-    from filelock import FileLock
+    from filelock import FileLock, Timeout
     from app.gmail_auth import token_path
     path = token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(path.parent / "receipt-sync.lock"), timeout=60):
-        return _sync_receipt_emails(max_emails, dry_run)
+    try:
+        with FileLock(str(path.parent / "receipt-sync.lock"), timeout=0):
+            return _sync_receipt_emails(max_emails, dry_run)
+    except Timeout:
+        return {"success": False, "busy": True, "message": "Receipt import already running; retry later."}
 
 
 def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
@@ -302,8 +304,9 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     while True:
         response = service.users().messages().list(
             userId="me", q=query, maxResults=max_emails, pageToken=page_token,
-        ).execute()
+        ).execute(num_retries=3)
         messages.extend(response.get("messages", []))
+        logging.getLogger(__name__).info("Receipt scan: %d matching message IDs found", len(messages))
         page_token = response.get("nextPageToken")
         if not page_token:
             break
@@ -333,7 +336,9 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     ignored_count = 0
     failed_count = 0
 
-    for msg_meta in messages:
+    for message_index, msg_meta in enumerate(messages):
+        if message_index % 50 == 0:
+            logging.getLogger(__name__).info("Receipt import progress: %d/%d inspected, %d imported", message_index, len(messages), len(imported_items))
         sender, subject = "Unknown", ""
         msg_id = msg_meta["id"]
 
@@ -347,7 +352,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                 service.users()
                 .messages()
                 .get(userId="me", id=msg_id, format="full")
-                .execute()
+                .execute(num_retries=3)
             )
             headers = {
                 h["name"].lower(): h["value"]

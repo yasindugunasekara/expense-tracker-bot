@@ -99,3 +99,26 @@ def test_concurrent_refresh_once(monkeypatch,tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         assert all(c.valid for c in pool.map(lambda _:auth.get_credentials(["read"]),range(4)))
     assert len(refreshes)==1
+
+
+def test_gmail_network_timeout(monkeypatch):
+    credentials=MagicMock()
+    monkeypatch.setattr(auth,"get_credentials",lambda scopes:credentials)
+    http=MagicMock();monkeypatch.setattr(auth.httplib2,"Http",http)
+    authorized=MagicMock();monkeypatch.setattr(auth,"AuthorizedHttp",authorized)
+    build=MagicMock();monkeypatch.setattr(auth,"build",build)
+    auth.get_gmail_service(["read"])
+    http.assert_called_once_with(timeout=30)
+    authorized.assert_called_once_with(credentials,http=http.return_value)
+    assert "credentials" not in build.call_args.kwargs
+
+
+def test_startup_sync_does_not_block_scheduler(monkeypatch):
+    instance=MagicMock()
+    monkeypatch.setattr(scheduler,"BlockingScheduler",lambda **kwargs:instance)
+    monkeypatch.setattr(scheduler,"check_due_tasks",MagicMock())
+    sync=MagicMock();monkeypatch.setattr(scheduler,"auto_sync_receipt_emails",sync)
+    scheduler.main()
+    sync.assert_not_called()
+    instance.start.assert_called_once()
+    assert any(c.kwargs.get("id")=="startup_receipt_sync" for c in instance.add_job.call_args_list)

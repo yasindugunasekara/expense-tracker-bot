@@ -2,25 +2,13 @@ import base64
 import os
 import re
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
 from pathlib import Path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 
 from app.core.database import supabase
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CREDENTIALS_FILE = PROJECT_ROOT / "credentials.json"
-TOKEN_FILE = PROJECT_ROOT / "token.json"
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-]
-
 
 class HTMLTextExtractor(HTMLParser):
     """Cleanly extracts visible text from HTML email bodies while ignoring code/style tags."""
@@ -48,35 +36,7 @@ class HTMLTextExtractor(HTMLParser):
         return " ".join(self.text_parts)
 
 
-def get_gmail_service():
-    """Initialize and return an authorized Gmail API v1 service instance."""
-    if not CREDENTIALS_FILE.exists():
-        raise FileNotFoundError(f"Missing credentials file: {CREDENTIALS_FILE}")
-
-    credentials = None
-
-    if TOKEN_FILE.exists():
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-
-    if not credentials or not credentials.valid:
-        if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
-            print("\n🔑 Opening your browser to authorize Gmail access...")
-            print("👉 If your browser does not open automatically, copy and paste the URL shown below into your browser.")
-            print("👉 Log into your Google account and click 'Allow'.\n")
-            credentials = flow.run_local_server(
-                host="localhost",
-                port=0,
-                open_browser=True,
-                timeout_seconds=600,
-                success_message="Gmail authorization successful! You can close this browser tab.",
-            )
-
-        TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
-
-    return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+from app.gmail_auth import get_gmail_service
 
 
 def extract_payload_text(payload: dict) -> str:
@@ -144,6 +104,13 @@ def classify_helapay_merchant(merchant_raw: str) -> tuple[str, str]:
     return "Bills", merchant_raw.strip()
 
 
+def receipt_header_date(value):
+    try:
+        return parsedate_to_datetime(value).astimezone(ZoneInfo("Asia/Colombo")).date().isoformat()
+    except (ValueError, TypeError, OverflowError):
+        raise ValueError("Receipt has no valid transaction date or email Date header") from None
+
+
 def parse_pickme_receipt(subject: str, norm_text: str, date_header: str) -> dict | None:
     """Extract bill details from a genuine PickMe receipt email."""
     # Validate receipt indicator
@@ -199,9 +166,9 @@ def parse_pickme_receipt(subject: str, norm_text: str, date_header: str) -> dict
             dt = datetime.strptime(date_m.group(1), "%B %d, %Y").date()
             expense_date = dt.isoformat()
         except Exception:
-            expense_date = str(date_header)[:10]
+            expense_date = receipt_header_date(date_header)
     else:
-        expense_date = str(date_header)[:10]
+        expense_date = receipt_header_date(date_header)
 
     # Payment method
     pay_m = re.search(r"(Cash|Card|Credit Card|PickMe Wallet)\s*LKR", norm_text, re.IGNORECASE)
@@ -258,7 +225,7 @@ def parse_helapay_receipt(subject: str, norm_text: str, date_header: str) -> dic
 
     # Date format: DATE 2026-10-04 04:22:12 PM
     date_m = re.search(r"DATE\s+(\d{4}-\d{2}-\d{2})", norm_text)
-    expense_date = date_m.group(1) if date_m else str(date_header)[:10]
+    expense_date = date_m.group(1) if date_m else receipt_header_date(date_header)
 
     # Bank account
     bank_m = re.search(r"BANK ACCOUNT\s+(.*?)\s+(?:PAYMENT|REFERENCE)", norm_text, re.IGNORECASE)
@@ -312,6 +279,15 @@ def detect_and_parse_receipt(sender: str, subject: str, norm_text: str, date_hea
 
 
 def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
+    from filelock import FileLock
+    from app.gmail_auth import token_path
+    path = token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(path.parent / "receipt-sync.lock"), timeout=60):
+        return _sync_receipt_emails(max_emails, dry_run)
+
+
+def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     """
     Scan Gmail for unimported PickMe receipts and HelaPay payment confirmations,
     extract bill details, prevent duplicate imports, and record expenses in Supabase.
@@ -319,17 +295,18 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     service = get_gmail_service()
     query = "from:pickme.lk OR from:helapay.lk"
 
-    response = (
-        service.users()
-        .messages()
-        .list(
-            userId="me",
-            q=query,
-            maxResults=max_emails,
-        )
-        .execute()
-    )
-    messages = response.get("messages", [])
+    if not 1 <= max_emails <= 500:
+        raise ValueError("max_emails must be between 1 and 500 (Gmail page size)")
+    messages = []
+    page_token = None
+    while True:
+        response = service.users().messages().list(
+            userId="me", q=query, maxResults=max_emails, pageToken=page_token,
+        ).execute()
+        messages.extend(response.get("messages", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
 
     if not messages:
         return {
@@ -343,15 +320,13 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
 
     # Load already imported message IDs to prevent duplicate processing
     try:
-        imports_res = (
-            supabase.table("email_imports")
-            .select("message_id, expense_id, status")
-            .execute()
-        )
-        existing_imports = {row["message_id"]: row for row in (imports_res.data or [])}
-    except Exception as exc:
-        print(f"Warning: could not query email_imports ({exc}). Falling back to empty set.")
         existing_imports = {}
+        for offset in range(0, len(messages), 100):
+            ids = [message["id"] for message in messages[offset:offset + 100]]
+            imports_res = supabase.table("email_imports").select("message_id,expense_id,status").in_("message_id", ids).execute()
+            existing_imports.update({row["message_id"]: row for row in (imports_res.data or [])})
+    except Exception:
+        raise RuntimeError("Cannot load email import tracking; aborting to prevent duplicate expenses.") from None
 
     imported_items = []
     skipped_duplicates = 0
@@ -359,6 +334,7 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     failed_count = 0
 
     for msg_meta in messages:
+        sender, subject = "Unknown", ""
         msg_id = msg_meta["id"]
 
         # 1. Primary duplicate check via email_imports table
@@ -386,6 +362,14 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
 
             if not parsed or parsed["amount"] <= 0:
                 ignored_count += 1
+                continue
+
+            marker = f"[gmail:{msg_id}]"
+            recovered = supabase.table("expenses").select("id").like("notes", f"%{marker}%").limit(1).execute()
+            if recovered.data:
+                if not dry_run:
+                    supabase.table("email_imports").upsert({"provider": "gmail", "message_id": msg_id, "status": "imported", "expense_id": recovered.data[0]["id"]}, on_conflict="message_id").execute()
+                skipped_duplicates += 1
                 continue
 
             # 2. Secondary duplicate check: check if reference already exists in expenses.notes
@@ -426,7 +410,7 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                     "merchant": parsed["merchant"],
                     "payment_method": parsed["payment_method"],
                     "expense_date": parsed["expense_date"],
-                    "notes": parsed["notes"],
+                    "notes": f"{parsed['notes']} {marker}",
                     "source": parsed["source"],
                 }
                 exp_res = supabase.table("expenses").insert(expense_payload).execute()
@@ -473,7 +457,7 @@ def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                     pass
 
     return {
-        "success": True,
+        "success": failed_count == 0,
         "total_found": len(messages),
         "imported_count": len(imported_items),
         "duplicates_skipped": skipped_duplicates,
@@ -581,7 +565,7 @@ if __name__ == "__main__":
         "-m",
         type=int,
         default=50,
-        help="Maximum emails to inspect in a single sync run (default: 50)",
+        help="Gmail page size; all pages are scanned (default: 50)",
     )
     args = parser.parse_args()
 

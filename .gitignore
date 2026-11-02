@@ -40,3 +40,6 @@ credentials.json
 *.pem
 .venv/
 __pycache__/
+gmail-state/
+.ci-venv/
+test-results/

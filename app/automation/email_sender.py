@@ -5,14 +5,10 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
-TOKEN_FILE = PROJECT_ROOT / "token.json"
 
 
 def send_email(
@@ -25,33 +21,6 @@ def send_email(
 
     if not recipient:
         raise ValueError("Set GMAIL_REPORT_TO in your .env file.")
-
-    if not TOKEN_FILE.exists():
-        raise FileNotFoundError(f"Gmail token not found: {TOKEN_FILE}")
-
-    credentials = Credentials.from_authorized_user_file(
-        str(TOKEN_FILE)
-    )
-
-    if not credentials.has_scopes(
-        ["https://www.googleapis.com/auth/gmail.send"]
-    ):
-        raise PermissionError(
-            "Gmail sending permission is missing. "
-            "Reauthorize Gmail with the gmail.send scope."
-        )
-
-    if credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
-        TOKEN_FILE.write_text(
-            credentials.to_json(),
-            encoding="utf-8",
-        )
-
-    if not credentials.valid:
-        raise PermissionError(
-            "Gmail credentials are invalid. Reauthorize Gmail."
-        )
 
     message = EmailMessage()
     message["To"] = recipient
@@ -71,12 +40,8 @@ def send_email(
         message.as_bytes()
     ).decode("utf-8")
 
-    service = build(
-        "gmail",
-        "v1",
-        credentials=credentials,
-        cache_discovery=False,
-    )
+    from app.gmail_auth import get_gmail_service
+    service = get_gmail_service(["https://www.googleapis.com/auth/gmail.send"])
 
     result = (
         service.users()
@@ -88,6 +53,8 @@ def send_email(
         .execute()
     )
 
+    if not result.get("id"):
+        raise RuntimeError("Gmail did not confirm a message ID.")
     return {
         "success": True,
         "message_id": result.get("id"),

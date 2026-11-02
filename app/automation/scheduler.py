@@ -1,4 +1,5 @@
 
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,6 +17,7 @@ from app.automation.jobs import (
 TIMEZONE = ZoneInfo("Asia/Colombo")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 SUMMARY_JOBS = {
     "daily_summary": send_daily_summary,
@@ -50,7 +52,7 @@ def get_period_key(period_or_type: str, now: datetime) -> str:
 def already_ran_this_period(task: dict, now: datetime) -> bool:
     last_run = task.get("last_run_at")
 
-    if not last_run:
+    if not last_run or task.get("last_status") != "success":
         return False
 
     try:
@@ -84,6 +86,19 @@ def already_ran_this_period(task: dict, now: datetime) -> bool:
 def is_due(task: dict, now: datetime) -> bool:
     if already_ran_this_period(task, now):
         return False
+
+    if task.get("last_status") == "failed" and task.get("last_run_at"):
+        previous = datetime.fromisoformat(task["last_run_at"].replace("Z", "+00:00"))
+        if previous.tzinfo is None:
+            previous = previous.replace(tzinfo=TIMEZONE)
+        period = task.get("threshold_period") or task.get("task_type")
+        if get_period_key(period, previous.astimezone(TIMEZONE)) == get_period_key(period, now):
+            try:
+                attempts = json.loads(task.get("last_error") or "{}").get("attempts", 1)
+            except (ValueError, AttributeError):
+                attempts = 1
+            if attempts >= 5 or (now - previous).total_seconds() < min(3600, 60 * 2 ** (attempts - 1)):
+                return False
 
     schedule_time = task.get("schedule_time")
 
@@ -149,7 +164,18 @@ def is_due(task: dict, now: datetime) -> bool:
     return True
 
 
-def record_result(task_id: int, now: datetime, status: str, error: str | None):
+def record_result(task_id: int, now: datetime, status: str, error: str | None, task=None):
+    if status == "failed":
+        attempts = 0
+        task = task or {}
+        try:
+            previous = datetime.fromisoformat(task["last_run_at"].replace("Z", "+00:00")).astimezone(TIMEZONE)
+            period = task.get("threshold_period") or task.get("task_type")
+            if task.get("last_status") == "failed" and get_period_key(period, previous) == get_period_key(period, now):
+                attempts = json.loads(task.get("last_error") or "{}").get("attempts", 1)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            pass
+        error = json.dumps({"attempts": attempts + 1, "message": error})
     supabase.table("automation_tasks").update(
         {
             "last_run_at": now.isoformat(),
@@ -176,7 +202,12 @@ def check_due_tasks():
         return
 
     for task in tasks:
-        if not is_due(task, now):
+        try:
+            due = is_due(task, now)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            logger.error("Invalid automation task %s; skipping", task.get("id"))
+            continue
+        if not due:
             continue
 
         task_id = task["id"]
@@ -207,7 +238,8 @@ def check_due_tasks():
                         task_id,
                         now,
                         "failed",
-                        str(exc)[:2000],
+                        str(exc)[:1500],
+                        task=task,
                     )
                 except Exception:
                     logger.exception(
@@ -231,7 +263,8 @@ def check_due_tasks():
                         task_id,
                         now,
                         "failed",
-                        str(exc)[:2000],
+                        str(exc)[:1500],
+                        task=task,
                     )
                 except Exception:
                     logger.exception(
@@ -255,6 +288,8 @@ def auto_sync_receipt_emails(trigger_label: str = "scheduled"):
             res.get("duplicates_skipped", 0),
             res.get("ignored_count", 0),
         )
+        if not res.get("success"):
+            logger.error("Receipt sync completed with %s failed messages", res.get("failed_count", 0))
         return res
     except Exception as exc:
         logger.warning("Could not auto-sync email receipts (%s): %s", trigger_label, exc)

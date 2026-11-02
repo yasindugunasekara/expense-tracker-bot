@@ -20,3 +20,7 @@ token_readonly_*.json
 mcp_server.py.backup
 *.pem
 expensa-ssh-key.pem
+
+gmail-state/
+.ci-venv/
+test-results/

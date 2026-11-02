@@ -2,6 +2,7 @@
 import os
 import re
 import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
 import asyncio
 import json
 from datetime import datetime, date, timedelta

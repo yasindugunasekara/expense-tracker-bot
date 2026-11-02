@@ -11,7 +11,7 @@ Push to GitHub `main` triggers local Jenkins polling every two minutes. Jenkins 
 - Azure root: `/home/azureuser/expense-tracker` on `172.197.160.37`.
 - SSH host key is pinned in `ci/known_hosts`; verify any replacement through a trusted connection.
 
-The pipeline supports `DEPLOY=false` for a test/package-only run. Pipeline credentials are used through Jenkins credential binding. Production `.env`, OAuth client credentials and `gmail-state/` stay on Azure and are excluded from Git, build contexts and release archives.
+The pipeline supports `DEPLOY=false` for a test/package-only run. Pipeline credentials are used through Jenkins credential binding. The temporary SSH key ACL is restricted to the Jenkins service identity before invoking Windows OpenSSH. Production `.env`, OAuth client credentials and `gmail-state/` stay on Azure and are excluded from Git, build contexts and release archives.
 
 ## Releases and rollback
 

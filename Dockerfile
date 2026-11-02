@@ -31,6 +31,7 @@ RUN chmod +x /app/entrypoint.sh
 
 # Copy application source code
 COPY app/ /app/app/
+COPY ci/check_processes.py /app/ci/check_processes.py
 
 # Expose ports:
 # 8000: FastAPI backend

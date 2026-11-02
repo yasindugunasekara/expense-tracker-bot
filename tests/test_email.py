@@ -60,3 +60,42 @@ def test_bad_task_isolated(monkeypatch):
     monkeypatch.setattr(scheduler,"supabase",db)
     send=MagicMock();monkeypatch.setitem(scheduler.SUMMARY_JOBS,"daily_summary",send)
     scheduler.check_due_tasks();send.assert_called_once()
+
+
+def test_valid_token_no_refresh(monkeypatch,tmp_path):
+    token=tmp_path/"token.json";token.write_text("{}")
+    monkeypatch.setattr(auth,"TOKEN_FILE",token)
+    c=MagicMock(valid=True)
+    monkeypatch.setattr(auth.Credentials,"from_authorized_user_file",lambda path:c)
+    assert auth.get_credentials(["read"]) is c
+    c.refresh.assert_not_called()
+
+
+def test_refresh_transport_error(monkeypatch,tmp_path):
+    from google.auth.exceptions import TransportError
+    token=tmp_path/"token.json";token.write_text("{}")
+    monkeypatch.setattr(auth,"TOKEN_FILE",token)
+    c=MagicMock(valid=False,refresh_token="test")
+    c.refresh.side_effect=TransportError("private")
+    monkeypatch.setattr(auth.Credentials,"from_authorized_user_file",lambda path:c)
+    with pytest.raises(ConnectionError,match="temporarily"):
+        auth.get_credentials(["read"])
+
+
+def test_concurrent_refresh_once(monkeypatch,tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    token=tmp_path/"token.json";token.write_text("stale")
+    monkeypatch.setattr(auth,"TOKEN_FILE",token)
+    refreshes=[]
+    def load(path):
+        c=MagicMock(valid=token.read_text()=="fresh",refresh_token="test")
+        def refresh(request):
+            refreshes.append(1)
+            c.valid=True
+        c.refresh.side_effect=refresh
+        c.to_json.return_value="fresh"
+        return c
+    monkeypatch.setattr(auth.Credentials,"from_authorized_user_file",load)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert all(c.valid for c in pool.map(lambda _:auth.get_credentials(["read"]),range(4)))
+    assert len(refreshes)==1

@@ -1,0 +1,31 @@
+services:
+  expense-tracker:
+    image: ${RELEASE_IMAGE:?release image required}
+    container_name: expense-tracker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - ${DEPLOY_ROOT}/.env
+    environment:
+      API_BASE_URL: http://127.0.0.1:8000
+      EXPENSE_API_URL: http://127.0.0.1:8000
+      TZ: Asia/Colombo
+      GMAIL_TOKEN_FILE: /app/gmail-state/token.json
+    volumes:
+      - ${DEPLOY_ROOT}/gmail-state:/app/gmail-state:rw
+      - ${DEPLOY_ROOT}/credentials.json:/app/credentials.json:ro
+    networks:
+      default:
+        aliases: [expense-tracker]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    mem_limit: 800m
+networks:
+  default:
+    external: true
+    name: expense-tracker_default

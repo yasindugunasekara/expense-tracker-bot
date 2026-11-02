@@ -19,7 +19,7 @@ services:
       TZ: Asia/Colombo
 
     volumes:
-      - ./token.json:/app/token.json:rw
+      - ./gmail-state:/app/gmail-state:rw
       - ./credentials.json:/app/credentials.json:ro
 
     healthcheck:

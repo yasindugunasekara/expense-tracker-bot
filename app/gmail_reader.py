@@ -377,12 +377,12 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
             if ref:
                 existing_expense = (
                     supabase.table("expenses")
-                    .select("id, title, amount")
+                    .select("id, title, amount, notes")
                     .ilike("notes", f"%{ref}%")
-                    .limit(1)
                     .execute()
                 )
-                if existing_expense.data:
+                matches = [row for row in (existing_expense.data or []) if re.search(r"(?<!\d)" + re.escape(ref) + r"(?!\d)", row.get("notes") or "")]
+                if matches:
                     # Already imported under a previous run/source
                     if not dry_run:
                         supabase.table("email_imports").upsert(
@@ -392,7 +392,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                                 "sender": sender,
                                 "subject": subject,
                                 "status": "skipped_duplicate",
-                                "expense_id": existing_expense.data[0]["id"],
+                                "expense_id": matches[0]["id"],
                                 "imported_at": datetime.now(timezone.utc).isoformat(),
                             },
                             on_conflict="message_id",

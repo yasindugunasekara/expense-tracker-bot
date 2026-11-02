@@ -43,3 +43,5 @@ __pycache__/
 gmail-state/
 .ci-venv/
 test-results/
+
+release.tar

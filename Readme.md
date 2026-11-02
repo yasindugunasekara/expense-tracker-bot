@@ -158,3 +158,7 @@ Review exposed ports and authentication settings before deploying to a public se
 - [ ] Secrets and token files are excluded from Git.
 
 > **Note:** Commands and configuration examples are templates. Confirm the actual dependencies, startup scripts, database schema, and MCP transport in the repository before using them.
+
+## Automated deployment
+
+See [CI_CD.md](CI_CD.md) for Jenkins-to-Azure deployment, rollback, tests, and Gmail authorization recovery.

@@ -594,6 +594,8 @@ async def sync_email_receipts(max_emails: int = 25) -> str:
     """
     Import genuine PickMe and HelaPay receipts dated January 1, 2026 onward.
     Reject invalid or future transaction dates and uncertain amounts; exclude refund/security alerts.
+    Include provider-authenticated receipts in Spam; exclude Trash.
+    Automatic sync runs hourly in Sri Lanka time.
     max_emails controls Gmail page size; all matching pages are checked.
     Recover receipts whose import tracking exists but whose expense row is missing.
     Scan Gmail for unimported PickMe ride receipts and HelaPay payment confirmation bills,

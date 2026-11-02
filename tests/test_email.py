@@ -122,3 +122,15 @@ def test_startup_sync_does_not_block_scheduler(monkeypatch):
     sync.assert_not_called()
     instance.start.assert_called_once()
     assert any(c.kwargs.get("id")=="startup_receipt_sync" for c in instance.add_job.call_args_list)
+
+
+def test_only_one_hourly_receipt_job(monkeypatch):
+    instance=MagicMock()
+    monkeypatch.setattr(scheduler,"BlockingScheduler",lambda **kwargs:instance)
+    monkeypatch.setattr(scheduler,"check_due_tasks",MagicMock())
+    sync=MagicMock();monkeypatch.setattr(scheduler,"auto_sync_receipt_emails",sync)
+    scheduler.main()
+    jobs=[c for c in instance.add_job.call_args_list if c.args[0] is sync and c.kwargs.get("trigger")=="cron"]
+    assert len(jobs)==1
+    assert jobs[0].kwargs["hour"]=="*" and jobs[0].kwargs["minute"]==0
+    assert jobs[0].kwargs["max_instances"]==1 and jobs[0].kwargs["coalesce"]

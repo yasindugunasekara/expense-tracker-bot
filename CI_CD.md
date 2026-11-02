@@ -46,3 +46,7 @@ Run `python -m pytest -q` and `python -m pip check` in the CI environment. CI te
 ## Receipt date policy
 
 PickMe and HelaPay imports include transaction dates from January 1, 2026 onward, through today's Sri Lanka date. Gmail search limits the arrival window, and transaction dates are validated again before storage or MCP results. Explicit invalid dates, future dates, and uncertain fares are rejected. Refund and security alerts are excluded. Tracking records only suppress an import when their linked expense row still exists; missing expense rows are recovered.
+
+## Hourly receipt fetching and Spam
+
+The production scheduler and standalone Gmail scheduler fetch at minute 00 of every hour in Asia/Colombo, with startup catch-up, coalescing and overlap protection. Genuine receipts in Spam are considered only when the provider sender has aligned Gmail DKIM or DMARC verification. Trash remains excluded. This leaves mailbox labels unchanged.

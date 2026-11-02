@@ -97,3 +97,49 @@ def test_multipart_uses_one_representation():
     def part(mime,text):return {"mimeType":mime,"body":{"data":base64.urlsafe_b64encode(text.encode()).decode()}}
     text=reader.extract_payload_text({"parts":[part("text/plain","Old value Rs. 999"),part("text/html","<b>Paid Amount LKR 100</b>")]})
     assert text=="Paid Amount LKR 100"
+
+
+@pytest.mark.parametrize("authentication,expected",[
+    ("mx.google.com; dkim=pass header.i=@mail.helapay.lk; spf=softfail smtp.mailfrom=alerts@mail.helapay.lk; dmarc=pass header.from=mail.helapay.lk",True),
+    ("mx.google.com; dkim=pass header.i=@evil.example; dmarc=fail header.from=mail.helapay.lk",False),
+    ("mx.google.com; dkim=fail header.i=@mail.helapay.lk; dmarc=fail header.from=mail.helapay.lk",False),
+    ("untrusted.example; dkim=pass header.i=@mail.helapay.lk",False),
+])
+def test_spam_provider_authentication(authentication,expected):
+    message={"payload":{"headers":[{"name":"From","value":"HelaPay <alerts@mail.helapay.lk>"},{"name":"Authentication-Results","value":authentication}]}}
+    assert reader.verified_spam_receipt(message) is expected
+
+
+def test_search_includes_spam_but_excludes_trash(monkeypatch):
+    service,db=setup(monkeypatch)
+    service.users.return_value.messages.return_value.list.return_value.execute.return_value={}
+    reader._sync_receipt_emails()
+    kwargs=service.users.return_value.messages.return_value.list.call_args.kwargs
+    assert kwargs["includeSpamTrash"] is True
+    assert "-in:trash" in kwargs["q"]
+
+
+@pytest.mark.parametrize("labels,authentication,expected",[
+    (["SPAM"],"mx.google.com; dkim=pass header.i=@mail.helapay.lk",1),
+    (["SPAM"],"mx.google.com; dkim=fail header.i=@mail.helapay.lk",0),
+    (["TRASH"],"mx.google.com; dkim=pass header.i=@mail.helapay.lk",0),
+])
+def test_spam_and_trash_import_behavior(monkeypatch,labels,authentication,expected):
+    import base64
+    service,db=setup(monkeypatch)
+    service.users.return_value.messages.return_value.list.return_value.execute.return_value={"messages":[{"id":"new-receipt"}]}
+    text="PAID Rs. 702.00 DATE 2026-11-01 PAYMENT ID 123456 REFERENCE ID 987654321"
+    values={"From":"HelaPay <alerts@mail.helapay.lk>","Subject":"You paid Rs.702 to Dialog Broadband","Date":"Sun, 1 Nov 2026 11:55:18 +0530","Authentication-Results":authentication}
+    message={"labelIds":labels,"payload":{"mimeType":"text/plain","headers":[{"name":k,"value":v} for k,v in values.items()],"body":{"data":base64.urlsafe_b64encode(text.encode()).decode()}}}
+    service.users.return_value.messages.return_value.get.return_value.execute.return_value=message
+    db.table.return_value.select.return_value.in_.return_value.execute.return_value.data=[]
+    db.table.return_value.select.return_value.like.return_value.limit.return_value.execute.return_value.data=[]
+    db.table.return_value.select.return_value.ilike.return_value.execute.return_value.data=[]
+    db.table.return_value.insert.return_value.execute.return_value.data=[{"id":77}]
+    result=reader._sync_receipt_emails()
+    assert result["imported_count"]==expected
+    if expected:
+        payload=db.table.return_value.insert.call_args.args[0]
+        assert payload["amount"]==702 and payload["expense_date"]=="2026-11-01"
+        assert payload["source"]=="email_helapay"
+    else:db.table.return_value.insert.assert_not_called()

@@ -3,7 +3,7 @@ import logging
 import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
 
@@ -281,6 +281,26 @@ def detect_and_parse_receipt(sender: str, subject: str, norm_text: str, date_hea
     return None
 
 
+def verified_spam_receipt(message):
+    """Only import Spam receipts with provider-aligned Gmail DKIM/DMARC verification."""
+    headers = message.get("payload", {}).get("headers", [])
+    sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "")
+    domain = parseaddr(sender)[1].lower().rsplit("@", 1)[-1]
+    def provider(value):
+        value = value.lower().strip('"').rsplit("@", 1)[-1]
+        return next((root for root in ("pickme.lk", "helapay.lk") if value == root or value.endswith("." + root)), None)
+    expected = provider(domain)
+    if not expected:
+        return False
+    authentication = next((h["value"] for h in headers if h["name"].lower() == "authentication-results" and h["value"].lstrip().lower().startswith("mx.google.com;")), "")
+    for segment in authentication.split(";")[1:]:
+        if re.match(r"\s*(?:dkim|dmarc)=pass\b", segment, re.I):
+            fields = re.findall(r"header\.(?:i|d|from)=([^\s;]+)", segment, re.I)
+            if any(provider(field) == expected for field in fields):
+                return True
+    return False
+
+
 def sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     from filelock import FileLock, Timeout
     from app.gmail_auth import token_path
@@ -300,7 +320,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     """
     service = get_gmail_service()
     cutoff = int(datetime.combine(IMPORT_START_DATE, datetime.min.time(), LOCAL_TIMEZONE).timestamp()) - 1
-    query = f"(from:pickme.lk OR from:helapay.lk) after:{cutoff}"
+    query = f"(from:pickme.lk OR from:helapay.lk) -in:trash after:{cutoff}"
 
     if not 1 <= max_emails <= 500:
         raise ValueError("max_emails must be between 1 and 500 (Gmail page size)")
@@ -308,7 +328,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     page_token = None
     while True:
         response = service.users().messages().list(
-            userId="me", q=query, maxResults=max_emails, pageToken=page_token,
+            userId="me", q=query, maxResults=max_emails, pageToken=page_token, includeSpamTrash=True,
         ).execute(num_retries=3)
         messages.extend(response.get("messages", []))
         logging.getLogger(__name__).info("Receipt scan: %d matching message IDs found", len(messages))
@@ -349,6 +369,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     ignored_count = 0
     failed_count = 0
     excluded_count = 0
+    unverified_spam_count = 0
 
     for message_index, msg_meta in enumerate(messages):
         if message_index % 50 == 0:
@@ -368,6 +389,13 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
                 .get(userId="me", id=msg_id, format="full")
                 .execute(num_retries=3)
             )
+            if "TRASH" in full_msg.get("labelIds", []):
+                ignored_count += 1
+                continue
+            if "SPAM" in full_msg.get("labelIds", []) and not verified_spam_receipt(full_msg):
+                unverified_spam_count += 1
+                logging.getLogger(__name__).warning("Skipping Spam receipt without verified provider authentication: %s", msg_id)
+                continue
             headers = {
                 h["name"].lower(): h["value"]
                 for h in full_msg.get("payload", {}).get("headers", [])
@@ -488,6 +516,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
         "excluded_before_start_date": excluded_count,
         "import_start_date": IMPORT_START_DATE.isoformat(),
         "missing_links_retried": len(missing_links),
+        "unverified_spam_skipped": unverified_spam_count,
         "imported_expenses": imported_items,
     }
 
@@ -519,7 +548,7 @@ def find_receipt_emails(max_results: int = 10):
 
 
 def start_email_sync_scheduler():
-    """Run a dedicated background scheduler for twice-daily email receipt fetching."""
+    """Run a dedicated background scheduler for hourly email receipt fetching."""
     from apscheduler.schedulers.blocking import BlockingScheduler
     from zoneinfo import ZoneInfo
 
@@ -529,9 +558,7 @@ def start_email_sync_scheduler():
     print("\n" + "=" * 65)
     print("EXPENSA AUTOMATED EMAIL RECEIPT SCHEDULER")
     print("=" * 65)
-    print("Schedule: Twice daily (Asia/Colombo)")
-    print("  1. Afternoon : 2:00 PM (14:00)")
-    print("  2. Night     : 11:30 PM (23:30)")
+    print("Schedule: Every hour at minute 00 (Asia/Colombo)")
     print("=" * 65)
 
     def scheduled_run(trigger_name: str):
@@ -544,22 +571,10 @@ def start_email_sync_scheduler():
         )
 
     scheduler.add_job(
-        scheduled_run,
-        trigger="cron",
-        hour=14,
-        minute=0,
-        id="email_sync_2pm",
-        name="Receipt Email Sync (2:00 PM)",
-        kwargs={"trigger_name": "2:00 PM Afternoon Sync"},
-    )
-    scheduler.add_job(
-        scheduled_run,
-        trigger="cron",
-        hour=23,
-        minute=30,
-        id="email_sync_1130pm",
-        name="Receipt Email Sync (11:30 PM)",
-        kwargs={"trigger_name": "11:30 PM Night Sync"},
+        scheduled_run, trigger="cron", hour="*", minute=0,
+        id="email_sync_hourly", name="Hourly receipt email sync",
+        kwargs={"trigger_name": "Hourly Sync"}, max_instances=1,
+        coalesce=True, misfire_grace_time=3600,
     )
 
     # Initial sync on startup
@@ -583,7 +598,7 @@ if __name__ == "__main__":
         "--schedule",
         "-s",
         action="store_true",
-        help="Run continuously on the twice-daily automated schedule (2:00 PM & 11:30 PM Colombo time)",
+        help="Run continuously; fetch every hour at minute 00 in Colombo time",
     )
     parser.add_argument(
         "--max",

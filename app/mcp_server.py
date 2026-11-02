@@ -592,6 +592,10 @@ async def delete_task(task_id: int, confirm: bool = False) -> str:
 @mcp.tool()
 async def sync_email_receipts(max_emails: int = 25) -> str:
     """
+    Import genuine PickMe and HelaPay receipts dated January 1, 2026 onward.
+    Reject invalid or future transaction dates and uncertain amounts; exclude refund/security alerts.
+    max_emails controls Gmail page size; all matching pages are checked.
+    Recover receipts whose import tracking exists but whose expense row is missing.
     Scan Gmail for unimported PickMe ride receipts and HelaPay payment confirmation bills,
     extract expense details (amounts, dates, merchants, payment methods, reference IDs),
     save them to Supabase, and prevent duplicate imports.

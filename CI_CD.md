@@ -42,3 +42,7 @@ Weekly summary tasks remain controlled by Claude MCP and always report the most 
 ## Verification
 
 Run `python -m pytest -q` and `python -m pip check` in the CI environment. CI tests substitute database and Gmail clients and do not send mail. `tests/test_deploy.sh` runs the deployment script with fake Docker commands in a temporary directory and verifies success, stale-build rejection and rollback without touching the real service. Real receipt imports and a single real summary email are rollout checks, separate from CI.
+
+## Receipt date policy
+
+PickMe and HelaPay imports include transaction dates from January 1, 2026 onward, through today's Sri Lanka date. Gmail search limits the arrival window, and transaction dates are validated again before storage or MCP results. Explicit invalid dates, future dates, and uncertain fares are rejected. Refund and security alerts are excluded. Tracking records only suppress an import when their linked expense row still exists; missing expense rows are recovered.

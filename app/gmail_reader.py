@@ -1,7 +1,8 @@
 import base64
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
@@ -40,36 +41,40 @@ from app.gmail_auth import get_gmail_service
 
 def extract_payload_text(payload: dict) -> str:
     """Recursively extract and clean all text from a Gmail message payload."""
-    raw_html = ""
-
-    def collect_parts(part: dict):
-        nonlocal raw_html
+    html_parts, plain_parts = [], []
+    def collect(part):
         mime = part.get("mimeType", "")
-        body = part.get("body", {})
-        data = body.get("data")
+        data = part.get("body", {}).get("data")
+        if data and not part.get("filename") and mime in ("text/html", "text/plain"):
+            decoded = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+            (html_parts if mime == "text/html" else plain_parts).append(decoded)
+        for child in part.get("parts", []):
+            collect(child)
+    collect(payload)
+    if html_parts:
+        parser = HTMLTextExtractor()
+        parser.feed(" ".join(html_parts))
+        return " ".join(parser.get_text().split())
+    return " ".join(" ".join(plain_parts).split())
 
-        if data:
-            try:
-                decoded = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-                if "html" in mime:
-                    raw_html += " " + decoded
-                elif "plain" in mime and not raw_html:
-                    raw_html += " " + decoded
-            except Exception:
-                pass
 
-        for subpart in part.get("parts", []):
-            collect_parts(subpart)
+IMPORT_START_DATE = date(2026, 1, 1)
+LOCAL_TIMEZONE = ZoneInfo("Asia/Colombo")
 
-    collect_parts(payload)
 
-    if not raw_html:
-        return ""
-
-    parser = HTMLTextExtractor()
-    parser.feed(raw_html)
-    text = parser.get_text()
-    return " ".join(text.split())
+def validate_receipt(parsed, today=None):
+    """Reject invalid facts and exclude genuine receipts outside the selected period."""
+    transaction_date = date.fromisoformat(parsed["expense_date"])
+    today = today or datetime.now(LOCAL_TIMEZONE).date()
+    if transaction_date > today:
+        raise ValueError("Receipt transaction date is in the future")
+    try:
+        amount = Decimal(str(parsed["amount"]))
+    except (InvalidOperation, TypeError):
+        raise ValueError("Receipt amount is invalid") from None
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("Receipt amount must be positive and finite")
+    return transaction_date >= IMPORT_START_DATE
 
 
 def classify_helapay_merchant(merchant_raw: str) -> tuple[str, str]:
@@ -105,7 +110,10 @@ def classify_helapay_merchant(merchant_raw: str) -> tuple[str, str]:
 
 def receipt_header_date(value):
     try:
-        return parsedate_to_datetime(value).astimezone(ZoneInfo("Asia/Colombo")).date().isoformat()
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(LOCAL_TIMEZONE).date().isoformat()
     except (ValueError, TypeError, OverflowError):
         raise ValueError("Receipt has no valid transaction date or email Date header") from None
 
@@ -123,10 +131,9 @@ def parse_pickme_receipt(subject: str, norm_text: str, date_header: str) -> dict
 
     # Amount extraction
     fare_m = (
-        re.search(r"Paid Amount\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
-        or re.search(r"Total Trip Fare\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
-        or re.search(r"Actual Fare\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
-        or re.search(r"LKR\s*([\d,.]+)", norm_text)
+        re.search(r"Paid Amount\s*:?\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
+        or re.search(r"Total Trip Fare\s*:?\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
+        or re.search(r"Actual Fare\s*:?\s*LKR\s*([\d,.]+)", norm_text, re.IGNORECASE)
     )
     if not fare_m:
         return None
@@ -164,14 +171,14 @@ def parse_pickme_receipt(subject: str, norm_text: str, date_header: str) -> dict
         try:
             dt = datetime.strptime(date_m.group(1), "%B %d, %Y").date()
             expense_date = dt.isoformat()
-        except Exception:
-            expense_date = receipt_header_date(date_header)
+        except ValueError:
+            raise ValueError("PickMe receipt contains an invalid transaction date") from None
     else:
         expense_date = receipt_header_date(date_header)
 
     # Payment method
     pay_m = re.search(r"(Cash|Card|Credit Card|PickMe Wallet)\s*LKR", norm_text, re.IGNORECASE)
-    pay_method = pay_m.group(1) if pay_m else "Cash"
+    pay_method = pay_m.group(1) if pay_m else None
 
     # Route locations (pickup and dropoff)
     loc_m = re.search(
@@ -216,15 +223,12 @@ def parse_helapay_receipt(subject: str, norm_text: str, date_header: str) -> dic
     if subj_m:
         amount = float(subj_m.group(1).replace(",", ""))
         merchant_raw = subj_m.group(2).strip()
-    elif amt_m:
-        amount = float(amt_m.group(1).replace(",", ""))
-        merchant_raw = "HelaPay Merchant"
     else:
         return None
 
     # Date format: DATE 2026-10-04 04:22:12 PM
     date_m = re.search(r"DATE\s+(\d{4}-\d{2}-\d{2})", norm_text)
-    expense_date = date_m.group(1) if date_m else receipt_header_date(date_header)
+    expense_date = date.fromisoformat(date_m.group(1)).isoformat() if date_m else receipt_header_date(date_header)
 
     # Bank account
     bank_m = re.search(r"BANK ACCOUNT\s+(.*?)\s+(?:PAYMENT|REFERENCE)", norm_text, re.IGNORECASE)
@@ -295,7 +299,8 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     extract bill details, prevent duplicate imports, and record expenses in Supabase.
     """
     service = get_gmail_service()
-    query = "from:pickme.lk OR from:helapay.lk"
+    cutoff = int(datetime.combine(IMPORT_START_DATE, datetime.min.time(), LOCAL_TIMEZONE).timestamp()) - 1
+    query = f"(from:pickme.lk OR from:helapay.lk) after:{cutoff}"
 
     if not 1 <= max_emails <= 500:
         raise ValueError("max_emails must be between 1 and 500 (Gmail page size)")
@@ -328,6 +333,14 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
             ids = [message["id"] for message in messages[offset:offset + 100]]
             imports_res = supabase.table("email_imports").select("message_id,expense_id,status").in_("message_id", ids).execute()
             existing_imports.update({row["message_id"]: row for row in (imports_res.data or [])})
+        linked_ids = list({row.get("expense_id") for row in existing_imports.values() if row.get("expense_id") is not None})
+        valid_ids = set()
+        for offset in range(0, len(linked_ids), 100):
+            linked = supabase.table("expenses").select("id").in_("id", linked_ids[offset:offset + 100]).execute()
+            valid_ids.update(row["id"] for row in (linked.data or []))
+        missing_links = {mid for mid, row in existing_imports.items() if row.get("status") in ("imported", "skipped_duplicate") and row.get("expense_id") not in valid_ids}
+        for mid in missing_links:
+            del existing_imports[mid]
     except Exception:
         raise RuntimeError("Cannot load email import tracking; aborting to prevent duplicate expenses.") from None
 
@@ -335,6 +348,7 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
     skipped_duplicates = 0
     ignored_count = 0
     failed_count = 0
+    excluded_count = 0
 
     for message_index, msg_meta in enumerate(messages):
         if message_index % 50 == 0:
@@ -365,8 +379,11 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
             norm_text = extract_payload_text(full_msg.get("payload", {}))
             parsed = detect_and_parse_receipt(sender, subject, norm_text, date_hdr)
 
-            if not parsed or parsed["amount"] <= 0:
+            if not parsed:
                 ignored_count += 1
+                continue
+            if not validate_receipt(parsed):
+                excluded_count += 1
                 continue
 
             marker = f"[gmail:{msg_id}]"
@@ -468,6 +485,9 @@ def _sync_receipt_emails(max_emails: int = 50, dry_run: bool = False) -> dict:
         "duplicates_skipped": skipped_duplicates,
         "ignored_count": ignored_count,
         "failed_count": failed_count,
+        "excluded_before_start_date": excluded_count,
+        "import_start_date": IMPORT_START_DATE.isoformat(),
+        "missing_links_retried": len(missing_links),
         "imported_expenses": imported_items,
     }
 
